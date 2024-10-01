@@ -17,9 +17,10 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 */
-import JOYSON from "joyson/dist/index.min.js";
+"use strict";
+import JOYSON from "joyson";
 import snappy from "snappyjs";
-import * as triplesec from "triplesec/browser/triplesec.js";
+import * as triplesec from "triplesec";
 
 triplesec.util.buffer_to_ui8a = function(b) {
     var i, ret, _i, _ref;
@@ -1026,7 +1027,7 @@ class Database {
 
         // Update metadata
         const metadata = await this._privateDbManager.getDatabaseMetadata(this._name);
-        metadata.collections = metadata.collections.filter(c => c.name !== collectionName);
+        metadata.collections = new Map(Object.entries(metadata.collections).filter(([name, c]) => {return name !== collectionName}));
         await this._privateDbManager.updateDatabaseMetadata(this._name, metadata);
     }
 

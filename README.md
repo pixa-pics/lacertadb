@@ -103,7 +103,6 @@ Manages the secure storage and retrieval of metadata related to the database.
 
 #### Methods:
 - **`init()`**: Initializes the private database manager.
-- **`updateDatabaseMetadata(dbName, metadata)`**: Updates metadata for a given database.
 - **`getDatabaseMetadata(dbName)`**: Retrieves metadata for a specific database.
 - **`destroy()`**: Deletes the private metadata database.
 
@@ -131,16 +130,6 @@ Represents a document stored in a collection.
 
 #### Methods:
 - **`decryptDocument(document, encryptionKey)`**: Decrypts a document using the provided key.
-- **`pack()`**: Compresses and encrypts document data for storage.
-- **`unpack()`**: Decrypts and decompresses document data for use.
-
-## Testing and Extending
-
-LacertaDB provides extensive flexibility for customization and testing. You can create additional collections, run batch document updates, and test encryption features for different use cases.
-
-- **Batch Operations**: Easily handle bulk document uploads or deletions.
-- **Compression Efficiency**: Test compression and retrieval times for large datasets.
-- **Offline Functionality**: Simulate offline scenarios to ensure seamless operation with cached data.
 
 ## Contributing
 
