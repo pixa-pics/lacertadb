@@ -29,7 +29,6 @@ const { LacertaDB } = require('lacertadb'); // window.LacertaDB
 const { PrivateDatabaseManager, Database, Document } = LacertaDB;
 
 (async () => {
-    // Initialize the private database manager
     const privateDbManager = new PrivateDatabaseManager();
     await privateDbManager.init();
 
@@ -39,35 +38,40 @@ const { PrivateDatabaseManager, Database, Document } = LacertaDB;
 
     // Create a collection
     await db.createCollection('users');
+    await db.createCollection('posts');
 
     // Get the collection instance
     const usersCollection = await db.getCollection('users');
+    const postsCollection = await db.getCollection('posts');
 
     // Add a document
     await usersCollection.addDocument({ _id: "login", _permanent: true, data: { name: new Uint8Array(9) } }, "hello");
     await usersCollection.addDocument({ _id: "him", _compressed: true, data: { name: 'John Doe', email: 'john@example.com' } });
+    await postsCollection.addDocument({ _id: "post1", _compressed: true, data: { body: "...", author: "him", data: new Uint32Array(4) } });
+    await postsCollection.addDocument({ _id: "post2", _compressed: false, data: { body: "-", author: "him", data: new Uint32Array(8) } });
+    await postsCollection.deleteDocument("post1");
 
     // Query the collection
-    const queryResult = await usersCollection.getDocument("him");
-    console.log(queryResult);
+    const queryResult = await usersCollection.getDocument("login");
+    console.log(await new Document(queryResult, "hello").objectOutput());
 
     // Delete a document
     await usersCollection.deleteDocument("him");
 
-    // Query the collection again
-    const queryResult2 = await usersCollection.query();
+    // Query the collection
+    const queryResult2 = await postsCollection.query();
     console.log(queryResult2);
 
-    // Retrieve and decrypt an encrypted document
+    // Query the collection
     const ciphered = await usersCollection.getDocument("login");
     const deciphered = await Document.decryptDocument(ciphered, "hello");
     console.log(ciphered, deciphered);
 
     // Delete the collection
-    await db.deleteCollection('users');
+    //await db.deleteCollection('users');
 
     // Delete the entire database
-    await db.deleteDatabase();
+    //await db.deleteDatabase();
 })();
 ```
 

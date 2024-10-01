@@ -50,43 +50,41 @@ class IndexedDBUtility {
      */
     static openDatabase(dbName, version = null, upgradeCallback = null) {
         return new Promise((resolve, reject) => {
-            const request = indexedDB.open(dbName);  // Open without specifying a version initially
+            let request;
 
-            request.onupgradeneeded = event => {
+            if (version) {
+                request = indexedDB.open(dbName, version);
+            } else {
+                request = indexedDB.open(dbName);
+            }
+
+            request.onupgradeneeded = (event) => {
                 const db = event.target.result;
-                console.log(`Upgrading or initializing database: ${dbName}, version: ${event.newVersion}`);
+                const oldVersion = event.oldVersion;
+                const newVersion = event.newVersion;
+                console.log(`Upgrading database "${dbName}" from version ${oldVersion} to ${newVersion}`);
 
-                // Call the upgrade callback to create object stores if needed
+                // Execute the upgrade callback, allowing creation or modification of object stores
                 if (upgradeCallback) {
-                    upgradeCallback(db, event.oldVersion, event.newVersion);
+                    upgradeCallback(db, oldVersion, newVersion);
                 }
             };
 
-            request.onsuccess = event => {
+            request.onsuccess = (event) => {
                 const db = event.target.result;
-                if (version && version > db.version) {
-                    // Close the current connection and reopen with the correct version
-                    db.close();
-                    const versionedRequest = indexedDB.open(dbName, version);  // Reopen with the specified version
 
-                    versionedRequest.onupgradeneeded = event => {
-                        const db = event.target.result;
-                        console.log(`Upgrading database to version ${version}`);
-                        if (upgradeCallback) {
-                            upgradeCallback(db, event.oldVersion, event.newVersion);
-                        }
-                    };
+                // Handle the database close event
+                db.onclose = () => {
+                    console.log(`Database "${dbName}" connection is closing.`);
+                };
 
-                    versionedRequest.onsuccess = event => resolve(event.target.result);
-                    versionedRequest.onerror = event => reject(`Failed to open database: ${event.target.error.message}`);
-                } else {
-                    // If no version update is needed, resolve the database
-                    resolve(db);
-                }
+                // Resolve with the opened database instance
+                resolve(db);
             };
 
-            request.onerror = event => {
-                reject(`Failed to open database: ${event.target.error.message}`);
+            request.onerror = (event) => {
+                // Reject if an error occurs while opening the database
+                reject(new Error(`Failed to open database "${dbName}": ${event.target.error.message}`));
             };
         });
     }
@@ -103,6 +101,9 @@ class IndexedDBUtility {
      */
     static async performTransaction(db, storeNames, mode, callback, retries = 3) {
         try {
+            if (!db) {
+                throw new Error('Database connection is not available.');
+            }
             const tx = db.transaction(Array.isArray(storeNames) ? storeNames : [storeNames], mode);
             const stores = Array.isArray(storeNames) ? storeNames.map(name => tx.objectStore(name)) : [tx.objectStore(storeNames)];
             const result = await callback(...stores);
@@ -113,7 +114,7 @@ class IndexedDBUtility {
             });
         } catch (error) {
             if (retries > 0) {
-                console.warn(`Transaction failed, retrying... (${retries} attempts left)`);
+                console.warn(`Transaction failed, retrying... (${retries} attempts left): ${error.message}`);
                 return this.performTransaction(db, storeNames, mode, callback, retries - 1);
             } else {
                 throw new Error(`Transaction ultimately failed after retries: ${error.message}`);
@@ -300,16 +301,7 @@ class PrivateDatabaseManager {
      * @returns {boolean} - True if valid, false otherwise.
      */
     _validateMetadata(metadata) {
-        return (
-            metadata &&
-            typeof metadata.name === 'string' &&
-            Array.isArray(metadata.collections) &&
-            metadata.collections.every(collection =>
-                typeof collection.name === 'string' &&
-                typeof collection.sizeKB === 'number' &&
-                typeof collection.length === 'number'
-            )
-        );
+        return metadata ? true: false;
     }
 
     /**
@@ -662,10 +654,10 @@ class Collection {
             if (!this._db.objectStoreNames.contains(this._name)) {
                 console.log(`Collection "${this._name}" does not exist. Creating it.`);
                 await this._createObjectStore();
+                this._metadata = { name: this._name, sizeKB: 0, length: 0, modified: Date.now() };
+                dbMetadata.collections[this._name] = this._metadata;
             }
 
-            this._metadata = { name: this._name, sizeKB: 0, length: 0, modified: Date.now() };
-            dbMetadata.collections[this._name] = this._metadata;
             await this._privateDbManager.updateDatabaseMetadata(this._db.name, this._metadata);
         }
     }
@@ -676,8 +668,11 @@ class Collection {
      */
     async _createObjectStore() {
         const newVersion = this._db.version + 1;
-        this._db.close();  // Close the current connection
 
+        // Remove this line:
+        this._db.close(); // Close the current database connection
+
+        // And adjust the rest of the method accordingly
         this._db = await IndexedDBUtility.openDatabase(this._db.name, newVersion, (db) => {
             if (!db.objectStoreNames.contains(this._name)) {
                 db.createObjectStore(this._name, { keyPath: '_id' });
@@ -743,7 +738,7 @@ class Collection {
 
         await this._updateMetadata();
     }
-    
+
     async addMultipleDocuments(documents) {
         return new Promise((resolve, reject) => {
             const tx = this._db.transaction(this._name, 'readwrite');
@@ -752,7 +747,7 @@ class Collection {
             documents.forEach(async (doc) => {
                 const docData = new Document(doc);
                 store.put(await docData.databaseOutput());
-                
+
                 // Update metadata using the document's packedData size
                 this._metadata.length -= 1;
                 this._metadata.sizeKB -= docData.packedData.byteLength / 1024; // Directly using byte length to calculate size in KB
@@ -846,7 +841,7 @@ class Collection {
                 }
             });
         });
-        
+
         return Promise.all(results);
     }
 
@@ -946,27 +941,50 @@ class Database {
      * @returns {Promise<void>}
      */
     async init() {
-        if(this._db === null) {
-            this._db = await IndexedDBUtility.openDatabase(this._name, 1, this._upgradeDatabase.bind(this));
+        if (this._db === null) {
+            this._db = await IndexedDBUtility.openDatabase(this._name, undefined, (db, oldVersion, newVersion) => {
+                this._upgradeDatabase(db, oldVersion, newVersion);
+            });
+
             // Load collections metadata from the private database
             const metadata = await this._privateDbManager.getDatabaseMetadata(this._name);
-            if (!metadata) {
-                await this._privateDbManager.updateDatabaseMetadata(this._name, { collections: [] });
+            if (metadata && metadata.collections) {
+                for (const collectionName in metadata.collections) {
+                    if (this._db.objectStoreNames.contains(collectionName)) {
+                        const collection = new Collection(this._db, collectionName, this._privateDbManager);
+                        await collection.init();
+                        this._collections.set(collectionName, collection);
+                    }
+                }
             }
             return true;
         }
         return false;
     }
 
+
     /**
      * Upgrade the database (called when a new version is needed).
      * @param {IDBDatabase} db - The IndexedDB instance.
+     * @param {number} oldVersion - The old version number.
+     * @param {number} newVersion - The new version number.
      * @private
      */
-    _upgradeDatabase(db) {
-        // In future, you can upgrade by adding object stores (collections) dynamically
-        console.log('Database upgrade triggered for', this._name);
+    _upgradeDatabase(db, oldVersion, newVersion) {
+        console.log(`Database upgrade triggered for "${this._name}" from version ${oldVersion} to ${newVersion}`);
+
+        // Get the list of collections that should exist
+        const collectionsToCreate = Array.from(this._collections.keys());
+
+        // Create any collections that don't exist
+        collectionsToCreate.forEach((collectionName) => {
+            if (!db.objectStoreNames.contains(collectionName)) {
+                db.createObjectStore(collectionName, { keyPath: '_id' });
+                console.log(`Collection "${collectionName}" created.`);
+            }
+        });
     }
+
 
     /**
      * Create a new collection in the database.
@@ -974,26 +992,29 @@ class Database {
      * @returns {Promise<void>}
      */
     async createCollection(collectionName) {
-
-        await this.init();
         if (this._collections.has(collectionName)) {
-            throw new Error(`Collection ${collectionName} already exists`);
+            console.log(`Collection "${collectionName}" already exists. Skipping creation operation.`);
+            return this.getCollection(collectionName);
         }
 
-        // Increment the version to trigger the onupgradeneeded event
+        // Check if the collection already exists in the database
+        if (this._db.objectStoreNames.contains(collectionName)) {
+            // Collection exists in the database but not in memory, so add it to the collections map
+            const collection = new Collection(this._db, collectionName, this._privateDbManager);
+            await collection.init();
+            this._collections.set(collectionName, collection);
+            return Promise.resolve(collection);
+        }
+
+        // Upgrade the database to create the new object store
         const newVersion = this._db.version + 1;
         this._db.close(); // Close the current database connection
 
         // Reopen the database with the new version to trigger an upgrade
-        await IndexedDBUtility.openDatabase(this._name, newVersion, (db) => {
-            if (!db.objectStoreNames.contains(collectionName)) {
-                db.createObjectStore(collectionName, { keyPath: '_id' });
-                console.log(`Collection "${collectionName}" created.`);
-            }
+        this._db = await IndexedDBUtility.openDatabase(this._name, newVersion, (db, oldVersion, newVersion) => {
+            // Call the _upgradeDatabase method to handle the upgrade
+            this._upgradeDatabase(db, oldVersion, newVersion);
         });
-
-        // Reopen the database with the new version
-        this._db = await IndexedDBUtility.openDatabase(this._name, newVersion);
 
         // Create collection instance and store it
         const collection = new Collection(this._db, collectionName, this._privateDbManager);
@@ -1004,8 +1025,10 @@ class Database {
         const metadata = await this._privateDbManager.getDatabaseMetadata(this._name);
         metadata.collections[collectionName] = { name: collectionName, sizeKB: 0, length: 0 };
         await this._privateDbManager.updateDatabaseMetadata(this._name, metadata);
-        return this.getCollection(collectionName);
+
+        return Promise.resolve(collection);
     }
+
 
     /**
      * Delete a collection from the database.
@@ -1055,6 +1078,7 @@ class Database {
         await this._privateDbManager.deleteDatabaseMetadata(this._name);
     }
 }
+
 
 var LacertaDB = {
     PrivateDatabaseManager,
