@@ -1,0 +1,46 @@
+{
+  "name": "lacertadb",
+  "version": "0.0.1",
+  "description": "LacertaDB ? Javascript IndexedDB Database for Web Browsers. Simple, Fast, Secure.",
+  "devDependencies": {
+    "path": "~0.12.7",
+    "uglifyjs-3-webpack-plugin": "~1.2.4",
+    "webpack": "~4.37.0",
+    "webpack-cli": "~4.10.0",
+    "babel-loader": "~8.3.0",
+    "@babel/core": "^7.23.6",
+    "@babel/preset-env": "^7.23.6"
+  },
+  "dependencies": {
+    "triplesec": "~4.0.3",
+    "snappyjs": "~0.7.0",
+    "joyson": "~1.0.5"
+  },
+  "build": {},
+  "author": "Affolter Matias",
+  "keywords": [
+    "indexeddb",
+    "database",
+    "db",
+    "store",
+    "permanent",
+    "encrypt",
+    "compress",
+    "joyson",
+    "triplesec",
+    "snappy",
+    "js",
+    "fast"
+  ],
+  "scripts": {
+    "build": "NODE_OPTIONS=--openssl-legacy-provider NODE_ENV=production webpack --node-env 'production'"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/pixa-pics/lacertadb.git"
+  },
+  "engines": {
+    "node": ">=0.8.0"
+  }
+}
