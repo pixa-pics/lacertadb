@@ -239,190 +239,6 @@ class IndexedDBUtility {
         });
     }
 }
-
-class PrivateDatabaseManager {
-    constructor(syncInterval = 10000) {
-        this._db = null;
-        this._dbName = 'lacertadb-private';
-        this._storeName = 'database-list';
-        this._metadataCache = new Map();
-        this._syncInterval = syncInterval;
-        this._syncTimer = null;
-        this._isDirty = false;
-    }
-
-    async init() {
-        if(this._db === null) {
-            try {
-                this._db = await IndexedDBUtility.openDatabase(this._dbName, 1, (db) => {
-                    if (!db.objectStoreNames.contains(this._storeName)) {
-                        db.createObjectStore(this._storeName, { keyPath: 'name' });
-                    }
-                });
-
-                console.log(`Database "${this._dbName}" initialized with version: ${this._db.version}`);
-            } catch (error) {
-                console.error(`Failed to initialize database: ${error}`);
-                throw new Error("Database initialization failed.");
-            }
-
-            this._syncTimer = setInterval(() => this._syncCacheToDatabase(), this._syncInterval);
-            return true;
-        }
-
-        return false;
-    }
-
-    /**
-     * Delete the metadata of a specific database from the cache and IndexedDB store.
-     * @param {string} dbName - The name of the database whose metadata needs to be deleted.
-     * @returns {Promise<void>}
-     */
-    async deleteDatabaseMetadata(dbName) {
-        try {
-            if (this._metadataCache.has(dbName)) {
-                this._metadataCache.delete(dbName);
-            }
-
-            await IndexedDBUtility.performTransaction(this._db, this._storeName, 'readwrite', (store) => {
-                return IndexedDBUtility.delete(store, dbName);
-            });
-
-            console.log(`Metadata for database "${dbName}" deleted successfully.`);
-        } catch (error) {
-            console.error(`Failed to delete metadata for ${dbName}: ${error}`);
-            throw new Error(`Metadata deletion failed: ${error.message}`);
-        }
-    }
-
-    /**
-     * Validate metadata to ensure it meets the required structure.
-     * @param {Object} metadata - The metadata object to validate.
-     * @returns {boolean} - True if valid, false otherwise.
-     */
-    _validateMetadata(metadata) {
-        return metadata ? true: false;
-    }
-
-    /**
-     * Updates or adds metadata for a collection, ensuring no duplicates.
-     * Collections are now stored in an object indexed by collection name.
-     * @param {string} dbName - The database name.
-     * @param {Object} newCollectionMetadata - The new metadata to update or add.
-     */
-    async updateDatabaseMetadata(dbName, newCollectionMetadata) {
-        let dbMetadata = await this.getDatabaseMetadata(dbName);
-
-        if (!this._validateMetadata(dbMetadata)) {
-            dbMetadata = {
-                name: dbName,
-                collections: {}, // Use an object for collections instead of an array
-                totalSizeKB: 0,
-                modified: 0, // Timestamp of the last modification
-            };
-        }
-
-        const collectionName = newCollectionMetadata.name;
-
-        // Prevent adding the database name itself as a collection
-        if (collectionName === dbName) {
-            console.warn(`Attempted to add the database itself "${dbName}" as a collection. Ignored.`);
-            return;
-        }
-
-        // If the collection exists, update it. Otherwise, add it.
-        if (!dbMetadata.collections[collectionName]) {
-            dbMetadata.collections[collectionName] = {
-                ...newCollectionMetadata,
-                modified: Date.now(), // Set modified timestamp
-            };
-        } else {
-            dbMetadata.collections[collectionName] = {
-                ...dbMetadata.collections[collectionName],
-                ...newCollectionMetadata, // Merge with existing data
-                modified: newCollectionMetadata.modified || dbMetadata.collections[collectionName].modified,
-            };
-        }
-
-        // Recalculate totalSizeKB at the root level
-        dbMetadata.totalSizeKB = Object.values(dbMetadata.collections)
-            .reduce((acc, collection) => acc + collection.sizeKB, 0);
-
-        // Update metadata in cache and mark as dirty
-        this._metadataCache.set(dbName, dbMetadata);
-        this._isDirty = true;
-    }
-
-    /**
-     * Retrieve metadata for a given database.
-     * @param {string} dbName - The name of the database to retrieve metadata for.
-     * @returns {Promise<Object>} - Returns the metadata object.
-     */
-    async getDatabaseMetadata(dbName) {
-        if (this._metadataCache.has(dbName)) {
-            return this._metadataCache.get(dbName);
-        }
-
-        try {
-            const metadata = await IndexedDBUtility.performTransaction(
-                this._db,
-                this._storeName,
-                'readonly',
-                (store) => IndexedDBUtility.get(store, dbName)
-            );
-
-            if (metadata) {
-                this._metadataCache.set(dbName, metadata);
-            }
-
-            return metadata || { name: dbName, collections: {}, totalSizeKB: 0 }; // Return object instead of array for collections
-        } catch (error) {
-            console.error(`Error while retrieving metadata for ${dbName}:`, error);
-            throw new Error(`Failed to retrieve metadata: ${error.message}`);
-        }
-    }
-
-    /**
-     * Sync the metadata cache to the database (if marked as dirty).
-     * @private
-     */
-    async _syncCacheToDatabase() {
-        if (!this._isDirty) return;
-
-        try {
-            for (let [dbName, metadata] of this._metadataCache.entries()) {
-                await IndexedDBUtility.performTransaction(this._db, this._storeName, 'readwrite', (store) => {
-                    return IndexedDBUtility.add(store, metadata);
-                });
-            }
-            this._isDirty = false;
-        } catch (error) {
-            console.error('Failed to sync metadata cache to the database:', error);
-        }
-    }
-
-    async close() {
-        if (this._syncTimer) {
-            clearInterval(this._syncTimer);
-            this._syncTimer = null;
-        }
-
-        await this._syncCacheToDatabase();
-
-        if (this._db) {
-            this._db.close();
-            this._db = null;
-        }
-    }
-
-    async destroy() {
-        await this.close();
-        this._metadataCache.clear();
-        await IndexedDBUtility.deleteDatabase(this._dbName);
-        console.log('Metadata database deleted successfully.');
-    }
-}
-
 class Document {
     constructor(data, encryptionKey = null) {
         this._id = data._id || this._generateId();
@@ -619,469 +435,272 @@ class Document {
         };
     }
 }
+class Database {
+    constructor(dbName) {
+        this.dbName = dbName;
+        this.db = null; // IDBDatabase instance
+        this.collections = new Map(); // collectionName -> Collection instance
+        this.metadata = {
+            name: dbName,
+            collections: {}, // collectionName -> collection metadata
+            totalSizeKB: 0,
+            modified: Date.now(),
+        };
+        this._metadataStoreName = "__lacerta_db__"
+    }
+
+    async init() {
+        // Open the database
+        this.db = await IndexedDBUtility.openDatabase(this.dbName, undefined, (db, oldVersion, newVersion) => {
+            this._upgradeDatabase(db, oldVersion, newVersion);
+        });
+        // Load metadata
+        await this._loadMetadata();
+    }
+
+    async _loadMetadata() {
+        // Load metadata from an object store in the database
+        if (!this.db.objectStoreNames.contains(this._metadataStoreName)) {
+            console.log('No metadata found, initializing new metadata');
+            // Initialize new metadata store
+            await this._saveMetadata(true);
+        } else {
+            // Load metadata
+            const metadata = await IndexedDBUtility.performTransaction(this.db, this._metadataStoreName, 'readonly', (store) => {
+                return IndexedDBUtility.get(store, this.dbName);
+            });
+            if (metadata) {
+                this.metadata = metadata;
+            }
+        }
+    }
+
+    async _saveMetadata(isNew = false) {
+        // Save metadata to an object store in the database
+        if (isNew && !this.db.objectStoreNames.contains(this._metadataStoreName)) {
+            const newVersion = this.db.version + 1;
+            this.db.close();
+            this.db = await IndexedDBUtility.openDatabase(this.dbName, newVersion, (db, oldVersion, newVersion) => {
+                if (!db.objectStoreNames.contains(this._metadataStoreName)) {
+                    db.createObjectStore(this._metadataStoreName, { keyPath: 'name' });
+                }
+            });
+        }
+        // Now save the metadata
+        await IndexedDBUtility.performTransaction(this.db, this._metadataStoreName, 'readwrite', (store) => {
+            return IndexedDBUtility.add(store, this.metadata);
+        });
+    }
+
+    _upgradeDatabase(db, oldVersion, newVersion) {
+        console.log(`Upgrading database "${this.dbName}" from version ${oldVersion} to ${newVersion}`);
+        // Create this._metadataStoreName object store if it doesn't exist
+        if (!db.objectStoreNames.contains(this._metadataStoreName)) {
+            db.createObjectStore(this._metadataStoreName, { keyPath: 'name' });
+        }
+        // Create object stores for collections if they don't exist
+        for (const collectionName of this.collections.keys()) {
+            if (!db.objectStoreNames.contains(collectionName)) {
+                db.createObjectStore(collectionName, { keyPath: '_id' });
+            }
+        }
+    }
+
+    async createCollection(collectionName) {
+        if (this.collections.has(collectionName)) {
+            console.log(`Collection "${collectionName}" already exists.`);
+            return this.collections.get(collectionName);
+        }
+        // Create object store for the collection
+        if (!this.db.objectStoreNames.contains(collectionName)) {
+            const newVersion = this.db.version + 1;
+            this.db.close();
+            this.db = await IndexedDBUtility.openDatabase(this.dbName, newVersion, (db, oldVersion, newVersion) => {
+                if (!db.objectStoreNames.contains(collectionName)) {
+                    db.createObjectStore(collectionName, { keyPath: '_id' });
+                }
+            });
+        }
+        // Create a new Collection instance
+        const collection = new Collection(this, collectionName);
+        await collection.init();
+        this.collections.set(collectionName, collection);
+        // Update metadata
+        this.metadata.collections[collectionName] = collection.metadata;
+        await this._saveMetadata();
+        return collection;
+    }
+
+    async deleteCollection(collectionName) {
+        if (!this.collections.has(collectionName)) {
+            throw new Error(`Collection "${collectionName}" does not exist.`);
+        }
+        // Delete all documents in the collection
+        await IndexedDBUtility.performTransaction(this.db, collectionName, 'readwrite', (store) => {
+            return IndexedDBUtility.clear(store);
+        });
+        // Remove the collection
+        this.collections.delete(collectionName);
+        // Update metadata
+        delete this.metadata.collections[collectionName];
+        await this._saveMetadata();
+    }
+
+    async getCollection(collectionName) {
+        if (this.collections.has(collectionName)) {
+            return this.collections.get(collectionName);
+        } else {
+            // Check if the collection exists in the database
+            if (this.db.objectStoreNames.contains(collectionName)) {
+                // Create a new Collection instance
+                const collection = new Collection(this, collectionName);
+                await collection.init();
+                this.collections.set(collectionName, collection);
+                return collection;
+            } else {
+                throw new Error(`Collection "${collectionName}" does not exist.`);
+            }
+        }
+    }
+
+    async close() {
+        if (this.db) {
+            this.db.close();
+            this.db = null;
+        }
+    }
+
+    async deleteDatabase() {
+        await this.close();
+        await IndexedDBUtility.deleteDatabase(this.dbName);
+    }
+}
 
 class Collection {
-    constructor(db, name, privateDbManager) {
-        this._db = db;  // Instance of the database this collection belongs to
-        this._name = name;
-        this._privateDbManager = privateDbManager;
-        this._metadata = {
-            name: name,
+    constructor(database, collectionName) {
+        this.database = database; // Reference to the parent Database instance
+        this.collectionName = collectionName;
+        this.metadata = {
+            name: collectionName,
             sizeKB: 0,
             length: 0,
             created: Date.now(),
-            modified: Date.now()
+            modified: Date.now(),
+            documents: {}, // Added 'documents' property
         };
     }
 
-    /**
-     * Initialize the collection and fetch metadata from the private database.
-     * Ensure that the collection (object store) exists.
-     * @returns {Promise<void>}
-     */
     async init() {
-        const dbMetadata = await this._privateDbManager.getDatabaseMetadata(this._db.name);
-
-        // Ensure collections array exists in metadata
-        if (!dbMetadata || !dbMetadata.collections) {
-            dbMetadata.collections = {};
-        }
-
-        if (this._name in dbMetadata.collections) {
-            this._metadata = dbMetadata.collections[this._name];
+        // Load collection metadata from database metadata
+        if (this.database.metadata.collections[this.collectionName]) {
+            this.metadata = this.database.metadata.collections[this.collectionName];
         } else {
-            // If the collection doesn't exist, create it
-            if (!this._db.objectStoreNames.contains(this._name)) {
-                console.log(`Collection "${this._name}" does not exist. Creating it.`);
-                await this._createObjectStore();
-                this._metadata = { name: this._name, sizeKB: 0, length: 0, modified: Date.now() };
-                dbMetadata.collections[this._name] = this._metadata;
-            }
-
-            await this._privateDbManager.updateDatabaseMetadata(this._db.name, this._metadata);
+            // Collection metadata not found, initialize new
+            this.database.metadata.collections[this.collectionName] = this.metadata;
+            await this.database._saveMetadata();
         }
     }
 
-    /**
-     * Create the object store (collection) dynamically.
-     * @private
-     */
-    async _createObjectStore() {
-        const newVersion = this._db.version + 1;
-
-        // Remove this line:
-        this._db.close(); // Close the current database connection
-
-        // And adjust the rest of the method accordingly
-        this._db = await IndexedDBUtility.openDatabase(this._db.name, newVersion, (db) => {
-            if (!db.objectStoreNames.contains(this._name)) {
-                db.createObjectStore(this._name, { keyPath: '_id' });
-                console.log(`Collection "${this._name}" created.`);
-            }
+    async addDocument(documentData, encryptionKey = null) {
+        const document = new Document(documentData, encryptionKey);
+        const docData = await document.databaseOutput();
+        await IndexedDBUtility.performTransaction(this.database.db, this.collectionName, 'readwrite', (store) => {
+            return IndexedDBUtility.add(store, docData);
         });
 
-        this._db = await IndexedDBUtility.openDatabase(this._db.name, newVersion);
-    }
+        const docSizeKB = docData.packedData.byteLength / 1024;
 
-    /**
-     * Add a document to the collection.
-     * @param {Document} document - The document to add.
-     * @returns {Promise<void>}
-     */
-    async addDocument(data, encryptionKey = null) {
-        const documentData = await new Document(data, encryptionKey).databaseOutput();
-
-        if (!this._db.objectStoreNames.contains(this._name)) {
-            console.log(`Object store "${this._name}" does not exist. Reinitializing.`);
-            await this._createObjectStore();
+        // Update metadata
+        if(!this.metadata.documents[docData._id]){
+            this.metadata.length += 1;
+            this.metadata.sizeKB += docSizeKB;
+            this.metadata.modified = Date.now();
+            this.metadata.documents[docData._id] = docSizeKB; // Store size in bytes;
+        }else {
+            const previousDocSizeKB = this.metadata.documents[docData._id];
+            this.metadata.sizeKB += previousDocSizeKB - docSizeKB;
+            this.metadata.modified = Date.now();
+            this.metadata.documents[docData._id] = docSizeKB; // Store size in bytes;
         }
 
-        await IndexedDBUtility.performTransaction(this._db, this._name, 'readwrite', (store) => {
-            // Update metadata using the document's packedData size
-            this._metadata.length += 1;
-            this._metadata.sizeKB += documentData.packedData.byteLength / 1024; // Convert bytes to KB
-            this._metadata.modified = Date.now();
-            return IndexedDBUtility.add(store, documentData);
-        });
-
-        await this._updateMetadata();
+        // Update database metadata
+        this.database.metadata.collections[this.collectionName] = this.metadata;
+        this.database.metadata.totalSizeKB = Object.values(this.database.metadata.collections).reduce((v, o) => v + o.sizeKB, 0);
+        this.database.metadata.modified = Date.now();
+        await this.database._saveMetadata();
     }
 
-    /**
-     * Delete a document from the collection by its ID.
-     * @param {string} docId - The ID of the document to delete.
-     * @returns {Promise<void>}
-     */
-    async deleteDocument(docId = 0, strict = false) {
-        // Get the document first to retrieve its size
-        const docData = await IndexedDBUtility.performTransaction(this._db, this._name, 'readonly', (store) => {
+    async deleteDocument(docId) {
+        // Get the document size before deleting
+        const docData = await IndexedDBUtility.performTransaction(this.database.db, this.collectionName, 'readonly', (store) => {
             return IndexedDBUtility.get(store, docId);
         });
-
         if (!docData) {
-            if(strict) {
-                throw new Error(`Document with ID ${docId} not found.`);
-            }else {
-                return;
-            }
+            throw new Error(`Document with ID ${docId} not found.`);
         }
-
-        // Proceed with deletion
-        await IndexedDBUtility.performTransaction(this._db, this._name, 'readwrite', (store) => {
-            // Update metadata using the document's packedData size
-            this._metadata.length -= 1;
-            this._metadata.sizeKB -= docData.packedData.byteLength / 1024; // Directly using byte length to calculate size in KB
-            this._metadata.modified = Date.now();
-
+        await IndexedDBUtility.performTransaction(this.database.db, this.collectionName, 'readwrite', (store) => {
             return IndexedDBUtility.delete(store, docId);
         });
 
-        await this._updateMetadata();
+        const docSizeKB = docData.packedData.byteLength / 1024;
+
+        // Update metadata
+        this.metadata.length -= 1;
+        this.metadata.sizeKB -= docSizeKB;
+        this.metadata.modified = Date.now();
+        delete this.metadata.documents[docId];
+
+        // Update database metadata
+        this.database.metadata.collections[this.collectionName] = this.metadata;
+        this.database.metadata.totalSizeKB = Object.values(this.database.metadata.collections).reduce((v, o) => v + o.sizeKB, 0);
+        this.database.metadata.modified = Date.now();
+        await this.database._saveMetadata();
     }
 
-    async addMultipleDocuments(documents) {
-        return new Promise((resolve, reject) => {
-            const tx = this._db.transaction(this._name, 'readwrite');
-            const store = tx.objectStore(this._name);
-
-            documents.forEach(async (doc) => {
-                const docData = new Document(doc);
-                store.put(await docData.databaseOutput());
-
-                // Update metadata using the document's packedData size
-                this._metadata.length -= 1;
-                this._metadata.sizeKB -= docData.packedData.byteLength / 1024; // Directly using byte length to calculate size in KB
-                this._metadata.modified = Date.now();
-            });
-
-            tx.oncomplete = () => resolve();
-            tx.onerror = () => reject(`Failed to insert documents: ${tx.error ? tx.error.message : 'unknown error'}`);
-        });
-    }
-
-    /**
-     * Get a document by its ID from the collection.
-     * @param {string} docId - The ID of the document to retrieve.
-     * @returns {Promise<Document|null>} - The document or null if not found.
-     */
     async getDocument(docId, encryptionKey = null) {
-        // Ensure the collection (object store) exists before performing a transaction
-        if (!this._db.objectStoreNames.contains(this._name)) {
-            console.log(`Object store "${this._name}" does not exist. Reinitializing.`);
-            await this._createObjectStore(); // Create the store if missing
-        }
-
-        const docData = await IndexedDBUtility.performTransaction(this._db, this._name, 'readonly', (store) => {
+        const docData = await IndexedDBUtility.performTransaction(this.database.db, this.collectionName, 'readonly', (store) => {
             return IndexedDBUtility.get(store, docId);
         });
-
         if (docData) {
             if (Document.isEncrypted(docData)) {
-                // Return encrypted data if no key is provided
-                return new Document(docData).databaseOutput();
+                if (encryptionKey) {
+                    return new Document(docData, encryptionKey).objectOutput();
+                } else {
+                    return new Document(docData).databaseOutput();
+                }
             } else {
                 return new Document(docData).objectOutput();
             }
+        } else {
+            return null;
         }
-
-        return null;
     }
 
-
-    async deleteOlderDocuments(quotaInMB) {
-        const bytesLimit = quotaInMB * 1024 * 1024;  // Convert MB to bytes
-        let currentSize = await this._calculateTotalSize();  // Calculate current size
-        const store = this._db.transaction(this._name, 'readwrite').objectStore(this._name);
-
-        return new Promise((resolve, reject) => {
-            const request = store.openCursor(null, 'next');  // Open cursor to iterate in ascending order of key (_modified)
-            request.onsuccess = async (event) => {
-                const cursor = event.target.result;
-                if (cursor && currentSize > bytesLimit) {
-                    await store.delete(cursor.key);  // Delete the document
-                    currentSize -= cursor.value.packedData.byteLength;  // Reduce the size
-                    cursor.continue();  // Continue to the next record
-                } else {
-                    resolve();
-                }
-            };
-            request.onerror = event => reject(`Cursor failed: ${event.target.error.message}`);
-        });
-    }
-
-    /**
-     * Query the collection with optional filters.
-     * @param {object} filter - Optional filter to apply to the documents.
-     * @returns {Promise<Object[]>} - Resolves with an array of objects matching the filter.
-     */
     async query(filter = {}) {
         const results = [];
-        await IndexedDBUtility.performTransaction(this._db, this._name, 'readonly', async (store) => {
+        await IndexedDBUtility.performTransaction(this.database.db, this.collectionName, 'readonly', async (store) => {
             await IndexedDBUtility.iterateCursor(store, async (docData) => {
-                // Check if the document is encrypted
-                if (Document.isEncrypted(docData)) {
-                    // Return encrypted data if no key is provided
-                    const data = new Document(docData).databaseOutput();
-                    results.push(data);
-                } else {
-                    console.log(docData)
-                    const doc = new Document(docData);
-                    const object = await doc.objectOutput();
-                    let match = true;
-                    for (const key in filter) {
-                        if (object.data[key] !== filter[key]) {
-                            match = false;
-                            break;
-                        }
+                const document = new Document(docData);
+                const object = await document.objectOutput();
+                let match = true;
+                for (const key in filter) {
+                    if (object.data[key] !== filter[key]) {
+                        match = false;
+                        break;
                     }
-                    if (match) {
-                        // Return plain document if not encrypted
-                        results.push(object);
-                    }
+                }
+                if (match) {
+                    results.push(object);
                 }
             });
         });
-
-        return Promise.all(results);
+        return results;
     }
 
-
-    onupgradeneeded(event) {
-        const db = event.target.result;
-        const store = db.createObjectStore(this._name, { keyPath: '_id' });
-        store.createIndex('modifiedIndex', '_modified', { unique: false });
-    }
-
-    async getDocumentsSortedByModified() {
-        const tx = this._db.transaction(this._name, 'readonly');
-        const store = tx.objectStore(this._name);
-        const index = store.index('modifiedIndex');
-
-        return new Promise((resolve, reject) => {
-            const results = [];
-            const request = index.openCursor(null, 'prev');  // Open cursor to get latest modified documents first
-
-            request.onsuccess = (event) => {
-                const cursor = event.target.result;
-                if (cursor) {
-                    results.push(cursor.value);
-                    cursor.continue();
-                } else {
-                    resolve(results);
-                }
-            };
-
-            request.onerror = (event) => reject(`Cursor failed: ${event.target.error.message}`);
-        });
-    }
-
-    async _calculateTotalSize() {
-        const tx = this._db.transaction(this._name, 'readonly');
-        const store = tx.objectStore(this._name);
-
-        return new Promise((resolve, reject) => {
-            let totalSize = 0;
-            const request = store.openCursor();
-
-            request.onsuccess = (event) => {
-                const cursor = event.target.result;
-                if (cursor) {
-                    totalSize += cursor.value.packedData.byteLength;  // Accumulate the size of each document
-                    cursor.continue();
-                } else {
-                    resolve(totalSize);
-                }
-            };
-
-            request.onerror = (event) => reject(`Failed to calculate total size: ${event.target.error.message}`);
-        });
-    }
-
-
-    /**
-     * Update the metadata in the private database.
-     * @private
-     */
-    async _updateMetadata() {
-        const dbMetadata = await this._privateDbManager.getDatabaseMetadata(this._db.name);
-
-        // Ensure collections array exists in metadata
-        if (!dbMetadata || !dbMetadata.collections) {
-            dbMetadata.collections = {};
-        }
-
-        if(this._name in dbMetadata.collections) {
-            dbMetadata.collections[this._name].sizeKB = this._metadata.sizeKB;
-            dbMetadata.collections[this._name].length = this._metadata.length;
-            dbMetadata.collections[this._name].modified = this._metadata.modified;
-        }
-
-        // Update total size and last modification for the entire database
-        dbMetadata.totalSizeKB = Object.values(dbMetadata.collections).reduce((total, coll) => total + coll.sizeKB, 0);
-        dbMetadata.modified = Date.now();
-
-        await this._privateDbManager.updateDatabaseMetadata(this._db.name, dbMetadata);
-    }
+    // Additional methods like updateDocument, bulk operations, etc., can be added here
 }
-
-class Database {
-    constructor(name, privateDbManager) {
-        this._name = name;
-        this._privateDbManager = privateDbManager;
-        this._collections = new Map();  // Map of collection instances
-        this._db = null;  // IndexedDB instance
-    }
-
-    get collectionNames() {
-        return Array.from(this._collections.keys());
-    }
-
-    /**
-     * Initialize the database by opening the IndexedDB instance and loading metadata.
-     * @returns {Promise<void>}
-     */
-    async init() {
-        if (this._db === null) {
-            this._db = await IndexedDBUtility.openDatabase(this._name, undefined, (db, oldVersion, newVersion) => {
-                this._upgradeDatabase(db, oldVersion, newVersion);
-            });
-
-            // Load collections metadata from the private database
-            const metadata = await this._privateDbManager.getDatabaseMetadata(this._name);
-            if (metadata && metadata.collections) {
-                for (const collectionName in metadata.collections) {
-                    if (this._db.objectStoreNames.contains(collectionName)) {
-                        const collection = new Collection(this._db, collectionName, this._privateDbManager);
-                        await collection.init();
-                        this._collections.set(collectionName, collection);
-                    }
-                }
-            }
-            return true;
-        }
-        return false;
-    }
-
-
-    /**
-     * Upgrade the database (called when a new version is needed).
-     * @param {IDBDatabase} db - The IndexedDB instance.
-     * @param {number} oldVersion - The old version number.
-     * @param {number} newVersion - The new version number.
-     * @private
-     */
-    _upgradeDatabase(db, oldVersion, newVersion) {
-        console.log(`Database upgrade triggered for "${this._name}" from version ${oldVersion} to ${newVersion}`);
-
-        // Get the list of collections that should exist
-        const collectionsToCreate = Array.from(this._collections.keys());
-
-        // Create any collections that don't exist
-        collectionsToCreate.forEach((collectionName) => {
-            if (!db.objectStoreNames.contains(collectionName)) {
-                db.createObjectStore(collectionName, { keyPath: '_id' });
-                console.log(`Collection "${collectionName}" created.`);
-            }
-        });
-    }
-
-
-    /**
-     * Create a new collection in the database.
-     * @param {string} collectionName - The name of the new collection.
-     * @returns {Promise<void>}
-     */
-    async createCollection(collectionName) {
-        if (this._collections.has(collectionName)) {
-            console.log(`Collection "${collectionName}" already exists. Skipping creation operation.`);
-            return this.getCollection(collectionName);
-        }
-
-        // Check if the collection already exists in the database
-        if (this._db.objectStoreNames.contains(collectionName)) {
-            // Collection exists in the database but not in memory, so add it to the collections map
-            const collection = new Collection(this._db, collectionName, this._privateDbManager);
-            await collection.init();
-            this._collections.set(collectionName, collection);
-            return Promise.resolve(collection);
-        }
-
-        // Upgrade the database to create the new object store
-        const newVersion = this._db.version + 1;
-        this._db.close(); // Close the current database connection
-
-        // Reopen the database with the new version to trigger an upgrade
-        this._db = await IndexedDBUtility.openDatabase(this._name, newVersion, (db, oldVersion, newVersion) => {
-            // Call the _upgradeDatabase method to handle the upgrade
-            this._upgradeDatabase(db, oldVersion, newVersion);
-        });
-
-        // Create collection instance and store it
-        const collection = new Collection(this._db, collectionName, this._privateDbManager);
-        await collection.init();
-        this._collections.set(collectionName, collection);
-
-        // Update the database metadata
-        const metadata = await this._privateDbManager.getDatabaseMetadata(this._name);
-        metadata.collections[collectionName] = { name: collectionName, sizeKB: 0, length: 0 };
-        await this._privateDbManager.updateDatabaseMetadata(this._name, metadata);
-
-        return Promise.resolve(collection);
-    }
-
-
-    /**
-     * Delete a collection from the database.
-     * @param {string} collectionName - The name of the collection to delete.
-     * @returns {Promise<void>}
-     */
-    async deleteCollection(collectionName) {
-        await this.init();
-        if (!this._collections.has(collectionName)) {
-            throw new Error(`Collection ${collectionName} does not exist`);
-        }
-
-        // Delete the collection from IndexedDB
-        const tx = this._db.transaction([collectionName], 'readwrite');
-        const store = tx.objectStore(collectionName);
-        store.clear();
-
-        this._collections.delete(collectionName);
-
-        // Update metadata
-        const metadata = await this._privateDbManager.getDatabaseMetadata(this._name);
-        metadata.collections = new Map(Object.entries(metadata.collections).filter(([name, c]) => {return name !== collectionName}));
-        await this._privateDbManager.updateDatabaseMetadata(this._name, metadata);
-    }
-
-    /**
-     * Get an instance of a collection by name.
-     * @param {string} collectionName - The name of the collection.
-     * @returns {Promise<Collection>} - Resolves with the Collection instance.
-     */
-    async getCollection(collectionName) {
-        if (!this._collections.has(collectionName)) {
-            const collection = new Collection(this._db, collectionName, this._privateDbManager);
-            await collection.init();
-            this._collections.set(collectionName, collection);
-        }
-
-        return this._collections.get(collectionName);
-    }
-
-    /**
-     * Delete the entire database and its metadata.
-     * @returns {Promise<void>}
-     */
-    async deleteDatabase() {
-        await IndexedDBUtility.deleteDatabase(this._name);
-        await this._privateDbManager.deleteDatabaseMetadata(this._name);
-    }
-}
-
 
 var LacertaDB = {
-    PrivateDatabaseManager,
     Collection,
     Database,
     Document

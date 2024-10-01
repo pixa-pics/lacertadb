@@ -26,114 +26,43 @@ npm install lacertadb
 
 ```javascript
 const { LacertaDB } = require('lacertadb'); // window.LacertaDB
-const { PrivateDatabaseManager, Database, Document } = LacertaDB;
+const { Database, Document, Collection } = LacertaDB;
 
 (async () => {
-    const privateDbManager = new PrivateDatabaseManager();
-    await privateDbManager.init();
-
-    // Create or open a new database
-    const db = new Database('my-database', privateDbManager);
+(async () => {
+    // Initialize the database
+    const db = new Database('lacerta');
     await db.init();
 
     // Create a collection
-    await db.createCollection('users');
-    await db.createCollection('posts');
-
-    // Get the collection instance
-    const usersCollection = await db.getCollection('users');
-    const postsCollection = await db.getCollection('posts');
+    const usersCollection = await db.createCollection('users');
+    const postsCollection = await db.createCollection('posts');
 
     // Add a document
-    await usersCollection.addDocument({ _id: "login", _permanent: true, data: { name: new Uint8Array(9) } }, "hello");
-    await usersCollection.addDocument({ _id: "him", _compressed: true, data: { name: 'John Doe', email: 'john@example.com' } });
-    await postsCollection.addDocument({ _id: "post1", _compressed: true, data: { body: "...", author: "him", data: new Uint32Array(4) } });
-    await postsCollection.addDocument({ _id: "post2", _compressed: false, data: { body: "-", author: "him", data: new Uint32Array(8) } });
-    await postsCollection.deleteDocument("post1");
+    await usersCollection.addDocument({ _id: "primerz", _compressed: true, data: { name: 'Alice', age: 30 } }, "password");
 
-    // Query the collection
-    const queryResult = await usersCollection.getDocument("login");
-    console.log(await new Document(queryResult, "hello").objectOutput());
+    await postsCollection.addDocument({ _id: "post1", _compressed: true, data: { body: "ioafhnouisf" } });
+    await postsCollection.addDocument({ _id: "post1", _compressed: true, data: { body: "ioafhnouisf" } });
+    await postsCollection.addDocument({ _id: "post2", _compressed: true, data: { body: "ioafhnouisf" } });
+    await postsCollection.addDocument({ _id: "post3", _compressed: true, data: { body: "ioafhnouisf" } });
+    await postsCollection.deleteDocument("post2");
+    await postsCollection.addDocument({data: "lol"});
 
-    // Delete a document
-    await usersCollection.deleteDocument("him");
+    // Query documents
+    const user = await usersCollection.getDocument("primerz", "password")
+    console.log(user);
 
-    // Query the collection
-    const queryResult2 = await postsCollection.query();
-    console.log(queryResult2);
+    const res = await postsCollection.query()
+    console.log(res);
 
-    // Query the collection
-    const ciphered = await usersCollection.getDocument("login");
-    const deciphered = await Document.decryptDocument(ciphered, "hello");
-    console.log(ciphered, deciphered);
-
-    // Delete the collection
-    //await db.deleteCollection('users');
-
-    // Delete the entire database
-    //await db.deleteDatabase();
+    // Close the database when done
+    await db.close();
 })();
 ```
 
 ## Why LacertaDB?
 
-LacertaDB stands out as an optimal solution for storing and managing sensitive client-side data. Here’s why:
-
-### 1. **Client-Side Privacy & Security**
-   - **Encryption**: All sensitive documents can be encrypted using strong encryption algorithms to ensure that even if unauthorized access is gained, the data remains unreadable.
-   - **Compression**: LacertaDB reduces the storage footprint with integrated compression using Snappy, ensuring faster data retrieval while saving space.
-
-### 2. **Efficient Data Management**
-   - **IndexedDB Power**: LacertaDB leverages the native IndexedDB API to provide persistent, asynchronous storage for large amounts of structured data.
-   - **Optimized Transactions**: All database operations are done through efficient, retry-enabled transactions, ensuring data integrity and robustness even in challenging environments.
-
-### 3. **Fine-Grained Control**
-   - Control how your data is stored with options to encrypt, compress, and set documents as permanent (non-deletable).
-   - Metadata caching ensures that frequent operations are faster and that your data is in sync across operations.
-
-### 4. **Advanced Query Capabilities**
-   - **Search & Retrieval**: Query documents within a collection with ease. Retrieve documents by `_id` or search through all documents with filters.
-   - **Sorting and Versioning**: Ensure you're working with the latest version of your documents, and sort them by modification date or any other property.
-
-### 5. **Flexible Use Cases**
-   - **User Data Management**: Perfect for storing encrypted user credentials or session data.
-   - **Local Data Caching**: Cache large amounts of compressed data locally, reducing server-side load while maintaining privacy.
-   - **Offline First Applications**: Ideal for offline-first web apps that require robust, persistent data storage.
-
-## API Reference
-
-### `PrivateDatabaseManager`
-Manages the secure storage and retrieval of metadata related to the database.
-
-#### Methods:
-- **`init()`**: Initializes the private database manager.
-- **`getDatabaseMetadata(dbName)`**: Retrieves metadata for a specific database.
-- **`destroy()`**: Deletes the private metadata database.
-
-### `Database`
-Represents an IndexedDB instance. Manages collections and documents.
-
-#### Methods:
-- **`init()`**: Initializes the database.
-- **`createCollection(collectionName)`**: Creates a new collection in the database.
-- **`getCollection(collectionName)`**: Retrieves a collection instance.
-- **`deleteCollection(collectionName)`**: Deletes a collection from the database.
-- **`deleteDatabase()`**: Deletes the entire database.
-
-### `Collection`
-Represents a collection of documents within a database.
-
-#### Methods:
-- **`addDocument(document, encryptionKey)`**: Adds a document to the collection. Supports encryption with an optional key.
-- **`deleteDocument(docId)`**: Deletes a document by its `_id`.
-- **`getDocument(docId)`**: Retrieves a document by its `_id`.
-- **`query(filter)`**: Queries the collection using an optional filter.
-
-### `Document`
-Represents a document stored in a collection.
-
-#### Methods:
-- **`decryptDocument(document, encryptionKey)`**: Decrypts a document using the provided key.
+LacertaDB stands out as an optimal solution for storing and managing sensitive client-side data.
 
 ## Contributing
 
