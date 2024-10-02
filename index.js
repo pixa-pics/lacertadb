@@ -292,23 +292,23 @@ class LocalStorageUtility {
 class DatabaseMetadata {
     constructor(dbName) {
         this._dbName = dbName;
-        this._metadataKey = `db_${this._dbName}_metadata`;
+        this._metadataKey = `lacertadb_${this._dbName}_metadata`;
+        this._collections = new Map();
         this._metadata = this._loadMetadata();
-        this._collections = new Map(); // Map of collectionName -> CollectionMetadata
     }
 
     _loadMetadata() {
-        const metadata = LocalStorageUtility.getItem(this._metadataKey);
+        const metadata = LocalStorageUtility.getItem(this.metadataKey);
         if (metadata) {
             // Recreate CollectionMetadata instances
             for (const collectionName in metadata.collections) {
                 const collectionData = metadata.collections[collectionName];
                 const collectionMetadata = new CollectionMetadata(collectionName, this, collectionData);
-                this._collections.set(collectionName, collectionMetadata);
+                this.collections.set(collectionName, collectionMetadata);
             }
-            this._metadata = metadata;
+            this.data = metadata;
         } else {
-            this._metadata = {
+            this.data = {
                 name: this._dbName,
                 collections: {}, // collectionName -> collection metadata data
                 totalSizeKB: 0,
@@ -319,72 +319,95 @@ class DatabaseMetadata {
         return this._metadata;
     }
 
+    // Getter and Setter for data
+    get data() {
+        return this._metadata;
+    }
+
+    set data(d) {
+        this._metadata = d;
+    }
+
     // Getter for name
     get name() {
-        return this._metadata.name;
+        return this.data.name;
+    }
+
+    // Getter for key
+    get metadataKey() {
+        return this._metadataKey;
+    }
+
+    // Getter and Setter for collections
+    get collections() {
+        return this._collections;
+    }
+
+    set collections(c) {
+        this._collections = c;
     }
 
     // Getter for totalSizeKB
     get totalSizeKB() {
-        return this._metadata.totalSizeKB;
+        return this.data.totalSizeKB;
     }
 
     // Getter for totalLength
     get totalLength() {
-        return this._metadata.totalLength;
+        return this.data.totalLength;
     }
 
     // Getter for modifiedAt
     get modifiedAt() {
-        return this._metadata.modifiedAt;
+        return this.data.modifiedAt;
     }
 
     // Get or create CollectionMetadata
     getCollectionMetadata(collectionName) {
-        if (!this._collections.has(collectionName)) {
+        if (!this.collections.has(collectionName)) {
             // Create new CollectionMetadata
             const collectionMetadata = new CollectionMetadata(collectionName, this);
-            this._collections.set(collectionName, collectionMetadata);
-            this._metadata.collections[collectionName] = collectionMetadata.getRawMetadata();
-            this._metadata.modifiedAt = Date.now();
+            this.collections.set(collectionName, collectionMetadata);
+            this.data.collections[collectionName] = collectionMetadata.getRawMetadata();
+            this.data.modifiedAt = Date.now();
         }
-        return this._collections.get(collectionName);
+        return this.collections.get(collectionName);
     }
 
     // Remove a collection's metadata
     removeCollectionMetadata(collectionName) {
-        const collectionMetadata = this._collections.get(collectionName);
+        const collectionMetadata = this.collections.get(collectionName);
         if (collectionMetadata) {
             // Subtract collection's size and length from totals
-            this._metadata.totalSizeKB -= collectionMetadata.sizeKB;
-            this._metadata.totalLength -= collectionMetadata.length;
+            this.data.totalSizeKB -= collectionMetadata.sizeKB;
+            this.data.totalLength -= collectionMetadata.length;
             // Remove the collection's metadata
-            this._collections.delete(collectionName);
-            delete this._metadata.collections[collectionName];
+            this.collections.delete(collectionName);
+            delete this.data.collections[collectionName];
             // Update modifiedAt internally
-            this._metadata.modifiedAt = Date.now();
+            this.data.modifiedAt = Date.now();
         }
     }
 
     // Adjust totalSizeKB and totalLength (used by CollectionMetadata)
     adjustTotals(sizeKBChange, lengthChange) {
-        this._metadata.totalSizeKB += sizeKBChange;
-        this._metadata.totalLength += lengthChange;
-        this._metadata.modifiedAt = Date.now();
+        this.data.totalSizeKB += sizeKBChange;
+        this.data.totalLength += lengthChange;
+        this.data.modifiedAt = Date.now();
     }
 
     // Get all collection names
     getCollectionNames() {
-        return Array.from(this._collections.keys());
+        return Array.from(this.collections.keys());
     }
 
     // Get raw metadata (for saving)
     getRawMetadata() {
         // Before returning, ensure that collections in _metadata are updated
         for (const [collectionName, collectionMetadata] of this._collections.entries()) {
-            this._metadata.collections[collectionName] = collectionMetadata.getRawMetadata();
+            this.data.collections[collectionName] = collectionMetadata.getRawMetadata();
         }
-        return this._metadata;
+        return this.data;
     }
 
     // Set raw metadata (e.g., after loading)
@@ -404,13 +427,13 @@ class DatabaseMetadata {
         return this._dbName;
     }
 
-    get metadataKey() {
+    get key() {
         return this._metadataKey;
     }
 
     // Method to save metadata
     saveMetadata() {
-        LocalStorageUtility.setItem(this._metadataKey, this.getRawMetadata());
+        LocalStorageUtility.setItem(this.key, this.getRawMetadata());
     }
 }
 
@@ -433,11 +456,15 @@ class CollectionMetadata {
                 documentPermanent: {}, // Stores document permanent flags
             };
             // Update databaseMetadata
-            this._databaseMetadata._metadata.collections[collectionName] = this._metadata;
-            this._databaseMetadata._metadata.modifiedAt = Date.now();
+            this._databaseMetadata.data.collections[collectionName] = this._metadata;
+            this._databaseMetadata.data.modifiedAt = Date.now();
         }
     }
 
+    // Getter for name
+    get name() {
+        return this._collectionName;
+    }
     // Getter for collection name
     get collectionName() {
         return this._collectionName;
@@ -458,51 +485,74 @@ class CollectionMetadata {
         return this._metadata.modifiedAt;
     }
 
+    get metadata() {
+        return this._metadata;
+    }
+
+    set metadata(m) {
+        return this._metadata = m;
+    }
+
+    get data() {
+        return this.metadata;
+    }
+
+    set data(m) {
+        this.metadata = m;
+    }
+
+    get databaseMetadata() {
+        return this._databaseMetadata;
+    }
+
+    set databaseMetadata(m) {
+        this._databaseMetadata = m;
+    }
     // Methods to add, update, delete documents
 
     // Add or update a document
     updateDocument(docId, docSizeKB, isPermanent = false) {
-        const isNewDocument = !(docId in this._metadata.documentSizes);
-        const previousDocSizeKB = this._metadata.documentSizes[docId] || 0;
+        const isNewDocument = !(docId in this.metadata.documentSizes);
+        const previousDocSizeKB = this.metadata.documentSizes[docId] || 0;
         const sizeKBChange = docSizeKB - previousDocSizeKB;
         const lengthChange = isNewDocument ? 1 : 0;
 
         // Update document metadata
-        this._metadata.documentSizes[docId] = docSizeKB;
-        this._metadata.documentModifiedAt[docId] = Date.now();
-        this._metadata.documentPermanent[docId] = isPermanent;
+        this.metadata.documentSizes[docId] = docSizeKB;
+        this.metadata.documentModifiedAt[docId] = Date.now();
+        this.metadata.documentPermanent[docId] = isPermanent ? 1: 0;
 
         // Update collection metadata
-        this._metadata.sizeKB += sizeKBChange;
-        this._metadata.length += lengthChange;
-        this._metadata.modifiedAt = Date.now();
+        this.metadata.sizeKB += sizeKBChange;
+        this.metadata.length += lengthChange;
+        this.metadata.modifiedAt = Date.now();
 
         // Update database totals
-        this._databaseMetadata.adjustTotals(sizeKBChange, lengthChange);
+        this.databaseMetadata.adjustTotals(sizeKBChange, lengthChange);
     }
 
     // Delete a document
     deleteDocument(docId) {
-        if (!(docId in this._metadata.documentSizes)) {
+        if (!(docId in this.metadata.documentSizes)) {
             return false;
         }
 
-        const docSizeKB = this._metadata.documentSizes[docId];
+        const docSizeKB = this.metadata.documentSizes[docId];
         const sizeKBChange = -docSizeKB;
         const lengthChange = -1;
 
         // Remove document metadata
-        delete this._metadata.documentSizes[docId];
-        delete this._metadata.documentModifiedAt[docId];
-        delete this._metadata.documentPermanent[docId];
+        delete this.metadata.documentSizes[docId];
+        delete this.metadata.documentModifiedAt[docId];
+        delete this.metadata.documentPermanent[docId];
 
         // Update collection metadata
-        this._metadata.sizeKB += sizeKBChange;
-        this._metadata.length += lengthChange;
-        this._metadata.modifiedAt = Date.now();
+        this.metadata.sizeKB += sizeKBChange;
+        this.metadata.length += lengthChange;
+        this.metadata.modifiedAt = Date.now();
 
         // Update database totals
-        this._databaseMetadata.adjustTotals(sizeKBChange, lengthChange);
+        this.databaseMetadata.adjustTotals(sizeKBChange, lengthChange);
 
         return true;
     }
@@ -524,12 +574,12 @@ class CollectionMetadata {
 
     // Get raw metadata (for saving)
     getRawMetadata() {
-        return this._metadata;
+        return this.metadata;
     }
 
     // Set raw metadata (e.g., after loading)
     setRawMetadata(metadata) {
-        this._metadata = metadata;
+        this.metadata = metadata;
     }
 }
 
@@ -544,21 +594,21 @@ class Database {
 
     async init() {
         // Open the database
-        this._db = await IndexedDBUtility.openDatabase(this._dbName, undefined, (db, oldVersion, newVersion) => {
+        this.db = await IndexedDBUtility.openDatabase(this.name, undefined, (db, oldVersion, newVersion) => {
             this._upgradeDatabase(db, oldVersion, newVersion);
         });
 
         // Initialize collections
-        const collectionNames = this._metadata.getCollectionNames();
+        const collectionNames = this.data.getCollectionNames();
         for (const collectionName of collectionNames) {
             const collection = new Collection(this, collectionName);
             await collection.init();
-            this._collections.set(collectionName, collection);
+            this.collections.set(collectionName, collection);
         }
     }
 
     _createDataStores(db) {
-        for (const collectionName of this._collections.keys()) {
+        for (const collectionName of this.collections.keys()) {
             this._createDataStore(db, collectionName);
         }
     }
@@ -570,66 +620,66 @@ class Database {
     }
 
     _upgradeDatabase(db, oldVersion, newVersion) {
-        console.log(`Upgrading database "${this._dbName}" from version ${oldVersion} to ${newVersion}`);
+        console.log(`Upgrading database "${this.name}" from version ${oldVersion} to ${newVersion}`);
         // Create object stores for collections if they don't exist
         this._createDataStores(db);
     }
 
     async createCollection(collectionName, settings = {}) {
-        if (this._collections.has(collectionName)) {
+        if (this.collections.has(collectionName)) {
             console.log(`Collection "${collectionName}" already exists.`);
-            return this._collections.get(collectionName);
+            return this.collections.get(collectionName);
         }
         // Create object store for the collection
-        if (!this._db.objectStoreNames.contains(collectionName)) {
-            const newVersion = this._db.version + 1;
-            this._db.close();
-            this._db = await IndexedDBUtility.openDatabase(this._dbName, newVersion, (db, oldVersion, newVersion) => {
+        if (!this.db.objectStoreNames.contains(collectionName)) {
+            const newVersion = this.db.version + 1;
+            this.db.close();
+            this.db = await IndexedDBUtility.openDatabase(this.name, newVersion, (db, oldVersion, newVersion) => {
                 this._createDataStore(db, collectionName);
             });
         }
         // Create a new Collection instance
         const collection = new Collection(this, collectionName, settings);
         await collection.init();
-        this._collections.set(collectionName, collection);
+        this.collections.set(collectionName, collection);
 
         // Ensure the CollectionMetadata exists
-        this._metadata.getCollectionMetadata(collectionName);
+        this.data.getCollectionMetadata(collectionName);
 
         // Save metadata
-        this._metadata.saveMetadata();
+        this.data.saveMetadata();
 
         return collection;
     }
 
     async deleteCollection(collectionName) {
-        if (!this._collections.has(collectionName)) {
+        if (!this.collections.has(collectionName)) {
             throw new Error(`Collection "${collectionName}" does not exist.`);
         }
         // Delete all documents in the collection
-        await IndexedDBUtility.performTransaction(this._db, collectionName, 'readwrite', (store) => {
+        await IndexedDBUtility.performTransaction(this.db, collectionName, 'readwrite', (store) => {
             return IndexedDBUtility.clear(store);
         });
         // Remove the collection
-        this._collections.delete(collectionName);
+        this.collections.delete(collectionName);
 
         // Remove collection metadata
-        this._metadata.removeCollectionMetadata(collectionName);
+        this.data.removeCollectionMetadata(collectionName);
 
         // Save metadata
-        this._metadata.saveMetadata();
+        this.data.saveMetadata();
     }
 
     async getCollection(collectionName) {
-        if (this._collections.has(collectionName)) {
-            return this._collections.get(collectionName);
+        if (this.collections.has(collectionName)) {
+            return this.collections.get(collectionName);
         } else {
             // Check if the collection exists in the database
-            if (this._db.objectStoreNames.contains(collectionName)) {
+            if (this.db.objectStoreNames.contains(collectionName)) {
                 // Create a new Collection instance
                 const collection = new Collection(this, collectionName);
                 await collection.init();
-                this._collections.set(collectionName, collection);
+                this.collections.set(collectionName, collection);
                 return collection;
             } else {
                 throw new Error(`Collection "${collectionName}" does not exist.`);
@@ -638,19 +688,19 @@ class Database {
     }
 
     async close() {
-        if (this._db) {
-            this._db.close();
-            this._db = null;
+        if (this.db) {
+            this.db.close();
+            this.db = null;
         }
     }
 
     async deleteDatabase() {
         await this.close();
-        await IndexedDBUtility.deleteDatabase(this._dbName);
+        await IndexedDBUtility.deleteDatabase(this.name);
         // Remove metadata and settings
-        this._metadata = null;
-        this._settings.clear();
-        LocalStorageUtility.removeItem(this._metadata.metadataKey);
+        this.data = null;
+        this.settings.clear();
+        LocalStorageUtility.removeItem(this.data.metadataKey);
     }
 
     // Accessor methods for private properties
@@ -662,24 +712,43 @@ class Database {
         return this._db;
     }
 
+    set db(db) {
+        this._db = db;
+    }
+
+    get data() {
+        return this.metadata;
+    }
+    set data(d) {
+        this.metadata = d;
+    }
+
+    get collectionsArray() {
+        return Array.from(this.collections.values());
+    }
+
     get collections() {
-        return Array.from(this._collections.values());
+        return this._collections;
     }
 
     get metadata() {
         return this._metadata;
     }
 
+    set metadata(d) {
+        this._metadata = d;
+    }
+
     get totalSizeKB() {
-        return this._metadata.totalSizeKB;
+        return this.data.totalSizeKB;
     }
 
     get totalLength() {
-        return this._metadata.totalLength;
+        return this.data.totalLength;
     }
 
     get modifiedAt() {
-        return this._metadata.modifiedAt;
+        return this.data.modifiedAt;
     }
 
     get settings() {
@@ -691,7 +760,7 @@ class Document {
     constructor(data, encryptionKey = null) {
         this._id = data._id || this._generateId();
         this._created = data._created || Date.now();
-        this._permanent = data._permanent || false;
+        this._permanent = data._permanent ? true: false;
         this._encrypted = data._encrypted || (encryptionKey ? true : false);
         this._compressed = data._compressed || false;
 
@@ -771,6 +840,7 @@ class Document {
             _modified: documentData._modified,
             _encrypted: true,
             _compressed: documentData._compressed,
+            _permanent: documentData._permanent ? true: false,
             data: unpackedData
         };
     }
@@ -877,7 +947,7 @@ class Document {
             _id: this._id,
             _created: this._created,
             _modified: this._modified,
-            _permanent: this._permanent,
+            _permanent: this._permanent ? true: false,
             _encrypted: this._encrypted,
             _compressed: this._compressed,
             data: this.data
@@ -896,7 +966,7 @@ class Document {
             _id: this._id,
             _created: this._created,
             _modified: this._modified,  // Keep original _modified if packedData was used
-            _permanent: this._permanent,
+            _permanent: this._permanent ? true: false,
             _compressed: this._compressed,
             _encrypted: this._encrypted,
             packedData: this.packedData  // Packed and ready for storage
@@ -907,41 +977,41 @@ class Document {
 class Settings {
     constructor(dbName, newSettings = {}) {
         this._dbName = dbName;
-        this._settingsKey = `db_${this._dbName}_settings`;
+        this._settingsKey = `lacertadb_${this._dbName}_settings`;
         this._settings = this._loadSettings();
         this._mergeSettings(newSettings);
     }
 
     _loadSettings() {
-        const settings = LocalStorageUtility.getItem(this._settingsKey);
+        const settings = LocalStorageUtility.getItem(this.settingsKey);
         return settings ? settings : {};
     }
 
     _saveSettings() {
-        LocalStorageUtility.setItem(this._settingsKey, this._settings);
+        LocalStorageUtility.setItem(this.settingsKey, this.settings);
     }
 
     _mergeSettings(newSettings) {
-        this._settings = { ...this._settings, ...newSettings };
+        this.settings = { ...this.settings, ...newSettings };
         this._saveSettings();
     }
 
     get(key) {
-        return this._settings[key];
+        return this.settings[key];
     }
 
     set(key, value) {
-        this._settings[key] = value;
+        this.settings[key] = value;
         this._saveSettings();
     }
 
     remove(key) {
-        delete this._settings[key];
+        delete this.settings[key];
         this._saveSettings();
     }
 
     clear() {
-        this._settings = {};
+        this.settings = {};
         this._saveSettings();
     }
 
@@ -953,6 +1023,14 @@ class Settings {
     get settings() {
         return this._settings;
     }
+
+    set settings(s) {
+        this._settings = s;
+    }
+
+    get settingsKey() {
+        return this._settings;
+    }
 }
 
 class Collection {
@@ -961,25 +1039,59 @@ class Collection {
         this._collectionName = collectionName;
         this._settings = settings;
         this._metadata = null;
+        this._lastFreeSpaceTime = 0;
     }
 
     async init() {
-        // Set default settings if not provided
-        this._settings.sizeLimitKB = this._settings.sizeLimitKB || Infinity;
-        this._settings.bufferLimitKB = this._settings.bufferLimitKB || 4096;
+
+        // Set defaults for size and buffer limits
+        this.settings.sizeLimitKB = this.settings.sizeLimitKB || Infinity;
+        this.settings.bufferLimitKB = this.settings.bufferLimitKB || (this.settings.sizeLimitKB * 0.2);
+
+        // Validate bufferLimitKB
+        if (this.settings.bufferLimitKB < -0.8 * this.settings.sizeLimitKB) {
+            throw new Error("Buffer limit cannot be below -80% of the size limit.");
+        }
+
+        // Set up free space settings with default validation
+        this.settings.freeSpaceEvery = this._validateFreeSpaceSetting(this.settings.freeSpaceEvery);
 
         // Load collection metadata from database metadata
-        this._metadata = this._database.metadata.getCollectionMetadata(this._collectionName);
+        this.metadata = this.database.metadata.getCollectionMetadata(this.name);
+    }
+
+    _validateFreeSpaceSetting(value) {
+        if (value === undefined || value === false || value === 0) {
+            return Infinity;
+        }
+        if (value < 1000 && value !== 0) {
+            throw new Error("Invalid freeSpaceEvery value. It must be 0, Infinity, or above 1000.");
+        }
+        if (value >= 1000 && value < 10000) {
+            console.warn("Warning: freeSpaceEvery value is between 1000 and 10000, which may lead to frequent freeing.");
+        }
+        return value;
     }
 
     // Accessor methods for private properties
-
     get name() {
         return this._collectionName;
     }
 
     get settings() {
         return this._settings;
+    }
+
+    set settings(d) {
+        this._settings = d;
+    }
+
+    get lastFreeSpaceTime() {
+        return this._lastFreeSpaceTime;
+    }
+
+    set lastFreeSpaceTime(t) {
+        this._lastFreeSpaceTime = t;
     }
 
     get database() {
@@ -990,42 +1102,63 @@ class Collection {
         return this._metadata;
     }
 
+    set metadata(m) {
+        this._metadata = m;
+    }
+
     get totalSizeKB() {
-        return this._metadata.totalSizeKB;
+        return this.metadata.totalSizeKB;
     }
 
     get totalLength() {
-        return this._metadata.totalLength;
+        return this.metadata.totalLength;
     }
 
     get modifiedAt() {
-        return this._metadata.modifiedAt;
+        return this.metadata.modifiedAt;
     }
 
+    get isFreeSpaceEnabled() {
+        return this.settings.freeSpaceEvery !== Infinity;
+    }
+
+    get shouldRunFreeSpaceSize() {
+        return this.totalSizeKB > this.settings.sizeLimitKB + this.settings.bufferLimitKB;
+    }
+
+    get shouldRunFreeSpaceTime() {
+        return this.isFreeSpaceEnabled && (Date.now() - this.lastFreeSpaceTime >= this.settings.freeSpaceEvery)
+    }
+
+    async _maybeFreeSpace() {
+        if(this.shouldRunFreeSpaceSize || this.shouldRunFreeSpaceTime){
+            return this.freeSpace(this.settings.sizeLimitKB);
+        }
+    }
 
     async addDocument(documentData, encryptionKey = null) {
         const document = new Document(documentData, encryptionKey);
         const docData = await document.databaseOutput();
         const docId = docData._id;
         const isPermanent = docData._permanent || false;
-        let isNewDocument = !(docId in this._metadata._metadata.documentSizes);
+        let isNewDocument = !(docId in this.metadata.data.documentSizes);
 
         try {
             if (isNewDocument) {
                 // Use insert (add), will fail if record exists
-                await IndexedDBUtility.performTransaction(this._database.db, this._collectionName, 'readwrite', (store) => {
+                await IndexedDBUtility.performTransaction(this.database.db, this.name, 'readwrite', (store) => {
                     return IndexedDBUtility.add(store, docData);
                 });
             } else {
                 // Use put (update) for existing documents
-                await IndexedDBUtility.performTransaction(this._database.db, this._collectionName, 'readwrite', (store) => {
+                await IndexedDBUtility.performTransaction(this.database.db, this.name, 'readwrite', (store) => {
                     return IndexedDBUtility.put(store, docData);
                 });
             }
         } catch (error) {
             if (isNewDocument && error.includes('Failed to insert record:')) {
                 // Record already exists, so we update it
-                await IndexedDBUtility.performTransaction(this._database.db, this._collectionName, 'readwrite', (store) => {
+                await IndexedDBUtility.performTransaction(this.database.db, this.name, 'readwrite', (store) => {
                     return IndexedDBUtility.put(store, docData);
                 });
                 isNewDocument = false;
@@ -1037,21 +1170,21 @@ class Collection {
         const docSizeKB = docData.packedData.byteLength / 1024;
 
         // Update collection metadata
-        this._metadata.updateDocument(docId, docSizeKB, isPermanent);
+        this.metadata.updateDocument(docId, docSizeKB, isPermanent);
 
         // Save metadata
-        this._database.metadata.saveMetadata();
-
+        this.database.metadata.saveMetadata();
+        await this._maybeFreeSpace();
         return isNewDocument;
     }
 
     async getDocument(docId, encryptionKey = null) {
         // Check if the document exists in metadata
-        if (!(docId in this._metadata._metadata.documentSizes)) {
+        if (!(docId in this.metadata.data.documentSizes)) {
             return false;
         }
 
-        const docData = await IndexedDBUtility.performTransaction(this._database.db, this._collectionName, 'readonly', (store) => {
+        const docData = await IndexedDBUtility.performTransaction(this.database.db, this.name, 'readonly', (store) => {
             return IndexedDBUtility.get(store, docId);
         });
 
@@ -1077,13 +1210,13 @@ class Collection {
     async getDocuments(ids, encryptionKey = null) {
         const results = [];
         // Filter IDs to those that exist in metadata
-        const existingIds = ids.filter(id => id in this._metadata._metadata.documentSizes);
+        const existingIds = ids.filter(id => id in this.metadata.data.documentSizes);
 
         if (existingIds.length === 0) {
             return results; // Return empty array if no documents exist
         }
 
-        await IndexedDBUtility.performTransaction(this._database.db, this._collectionName, 'readonly', async (store) => {
+        await IndexedDBUtility.performTransaction(this.database.db, this.name, 'readonly', async (store) => {
             const getPromises = existingIds.map(id => {
                 return IndexedDBUtility.get(store, id);
             });
@@ -1113,26 +1246,26 @@ class Collection {
     }
 
     async deleteDocument(docId, force = false) {
-        const isPermanent = this._metadata._metadata.documentPermanent[docId] || false;
+        const isPermanent = this.metadata.data.documentPermanent[docId] || false;
         if (isPermanent && !force) {
             return false;
         }
 
-        const docExists = docId in this._metadata._metadata.documentSizes;
+        const docExists = docId in this.metadata.data.documentSizes;
 
         if (!docExists) {
             return false;
         }
 
-        await IndexedDBUtility.performTransaction(this._database.db, this._collectionName, 'readwrite', (store) => {
+        await IndexedDBUtility.performTransaction(this.database.db, this.name, 'readwrite', (store) => {
             return IndexedDBUtility.delete(store, docId);
         });
 
         // Update metadata
-        this._metadata.deleteDocument(docId);
+        this.metadata.deleteDocument(docId);
 
         // Save metadata
-        this._database.metadata.saveMetadata();
+        this.database.metadata.saveMetadata();
 
         return true;
     }
@@ -1140,8 +1273,8 @@ class Collection {
     async deleteDocuments(docIds, force = false) {
         // Filter out IDs that don't exist or are _permanent (if force is false)
         const existingDocIds = docIds.filter(docId => {
-            const exists = docId in this._metadata._metadata.documentSizes;
-            const isPermanent = this._metadata._metadata.documentPermanent[docId] || false;
+            const exists = docId in this.metadata.data.documentSizes;
+            const isPermanent = this.metadata.data.documentPermanent[docId] || false;
             return exists && (force || !isPermanent);
         });
 
@@ -1150,29 +1283,30 @@ class Collection {
         }
 
         // Get total space to free
-        const totalSpaceToFree = existingDocIds.reduce((acc, docId) => acc + this._metadata._metadata.documentSizes[docId], 0);
+        const totalSpaceToFree = existingDocIds.reduce((acc, docId) => acc + this.metadata._metadata.documentSizes[docId], 0);
 
         // Perform deletion in a single transaction
-        await IndexedDBUtility.performTransaction(this._database.db, this._collectionName, 'readwrite', async (store) => {
+        await IndexedDBUtility.performTransaction(this.database.db, this.name, 'readwrite', async (store) => {
             for (const docId of existingDocIds) {
                 store.delete(docId);
             }
         });
 
         // Update metadata
-        this._metadata.deleteDocuments(existingDocIds);
+        this.metadata.deleteDocuments(existingDocIds);
 
         // Save metadata
-        this._database.metadata.saveMetadata();
+        this.database.metadata.saveMetadata();
 
         return totalSpaceToFree;
     }
 
     async freeSpace(size) {
         let spaceToFree;
+        this.lastFreeSpaceTime = Date.now();
         if (size >= 0) {
             // Positive size indicates maximum total size to keep
-            const currentSize = this._metadata.sizeKB;
+            const currentSize = this.metadata.sizeKB;
             if (currentSize <= size) {
                 // No need to free space
                 return 0;
@@ -1185,15 +1319,15 @@ class Collection {
         }
 
         // Sort documents by modified time (oldest first), excluding _permanent documents
-        const docEntries = Object.entries(this._metadata._metadata.documentModifiedAt)
-            .filter(([docId]) => !this._metadata._metadata.documentPermanent[docId])
+        const docEntries = Object.entries(this.metadata.data.documentModifiedAt)
+            .filter(([docId]) => !this.metadata.data.documentPermanent[docId])
             .sort((a, b) => a[1] - b[1]); // Ascending order of modified timestamp
 
         let totalFreed = 0;
         const docsToDelete = [];
 
         for (const [docId] of docEntries) {
-            const docSize = this._metadata._metadata.documentSizes[docId];
+            const docSize = this.metadata.data.documentSizes[docId];
             totalFreed += docSize;
             docsToDelete.push(docId);
             if (totalFreed >= spaceToFree) {
@@ -1209,7 +1343,7 @@ class Collection {
 
     async query(filter = {}, encryptionKey = null) {
         const results = [];
-        await IndexedDBUtility.performTransaction(this._database.db, this._collectionName, 'readonly', async (store) => {
+        await IndexedDBUtility.performTransaction(this.database.db, this.name, 'readonly', async (store) => {
             await IndexedDBUtility.iterateCursor(store, async (docData) => {
                 let document;
                 if (Document.isEncrypted(docData)) {
@@ -1223,8 +1357,8 @@ class Collection {
                     document = new Document(docData);
                 }
 
-                const object = await document.objectOutput();
                 let match = true;
+                const object = Object.keys(filter).length ? await document.objectOutput(): null;
                 for (const key in filter) {
                     if (object.data[key] !== filter[key]) {
                         match = false;
@@ -1232,7 +1366,7 @@ class Collection {
                     }
                 }
                 if (match) {
-                    results.push(object);
+                    results.push(object ? object: await document.objectOutput());
                 }
             });
         });

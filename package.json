@@ -1,7 +1,7 @@
 {
   "name": "lacertadb",
-  "version": "0.4.0",
-  "description": "LacertaDB ? Javascript IndexedDB Database for Web Browsers. Simple, Fast, Secure.",
+  "version": "0.4.1",
+  "description": "LacertaDB! JAVASCRIPT BROWSER DATABASE: IndexedDB for data and LocalStorage for metadata. So Simple, Very Fast, Well Secure.",
   "devDependencies": {
     "path": "~0.12.7",
     "uglifyjs-3-webpack-plugin": "~1.2.4",
@@ -30,7 +30,22 @@
     "triplesec",
     "snappy",
     "js",
-    "fast"
+    "fast",
+    "storage",
+    "persistant",
+    "free",
+    "space",
+    "size",
+    "storing",
+    "json",
+    "joyson",
+    "data",
+    "base",
+    "secure",
+    "browser",
+    "metadata",
+    "indexed",
+    "index"
   ],
   "scripts": {
     "build": "NODE_OPTIONS=--openssl-legacy-provider NODE_ENV=production webpack --node-env 'production'"

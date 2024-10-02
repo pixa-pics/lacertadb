@@ -1,6 +1,6 @@
-# LacertaDB (Version: 0.4.0)
+# LacertaDB (Version: 0.4.1)
 
-**LacertaDB** - Secure, compressed, client-side storage made simple. (Only works from the verion 0.4.0)
+**LacertaDB** - Secure, compressed, client-side storage made simple. (Only works from the verion 0.4.1)
 
 ![LacertaDB Javascript Logo](https://raw.githubusercontent.com/pixa-pics/lacertadb/refs/heads/main/lacerta.png)
 
@@ -32,19 +32,21 @@ import { Database } from "lacertadb";
 
 async function runExample() {
     // Initialize the database
-    const db = new Database("MyDatabase");
+    const db = new Database("interview");
     await db.init();
 
     // Create or get a collection
-    const collection = await db.createCollection("MyCollection");
+    const collection = await db.createCollection("humans", {limitSizeKB: 4096});
+    const collection2 = await db.createCollection("reptilians");
 
     // Add a new document (returns true if new, false if updated)
-    const doc = { data: { name: "Alice", age: 30 }, _compressed: true, _encrypted: false };
-    const isNewDocument = await collection.addDocument(doc);
+    const doc = { _id: "myAccount", data: { name: "Alice", age: 30 }, _compressed: true, _permanent: false };
+    const isNewDocument = await collection.addDocument(doc, "password");
     console.log("Document added (new):", isNewDocument);
+    await collection.addDocument({data: "hello"});
 
     // Retrieve the document by its ID
-    const retrieved = await collection.getDocument(doc._id);
+    const retrieved = await collection.getDocument(doc._id, "password");
     console.log("Retrieved Document:", retrieved);
 
     // Query documents based on a field
