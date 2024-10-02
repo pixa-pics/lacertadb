@@ -1,6 +1,6 @@
-# LacertaDB
+# LacertaDB (Version: 0.4.0)
 
-**LacertaDB** - Secure, compressed, client-side storage made simple.
+**LacertaDB** - Secure, compressed, client-side storage made simple. (Only works from the verion 0.4.0)
 
 ![LacertaDB Javascript Logo](https://raw.githubusercontent.com/pixa-pics/lacertadb/refs/heads/main/lacerta.png)
 
@@ -73,19 +73,24 @@ LacertaDB provides a rich API to manage your data with ease:
 - **Database**:
     - `init()`: Initialize the database.
     - `createCollection(collectionName)`: Creates or retrieves a collection.
+    - `getCollection(collectionName)`: Retrieves a collection.
     - `deleteDatabase()`: Deletes the entire database.
     - **Getters**: `totalSizeKB`, `totalLength`, `modifiedAt`.
 
 - **Collection**:
     - `addDocument(doc)`: Adds a new document or updates an existing one.
     - `getDocument(id)`: Retrieves a document by its ID.
+    - `getDocuments(ids)`: Retrieves documents by their IDs.
     - `deleteDocument(id)`: Deletes a document by its ID.
-    - `query(filter)`: Queries documents by fields.
+    - `deleteDocuments(ids)`: Deletes documents by their IDs.
+    - `query(filter)`: Queries documents by fields (slow).
     - **Getters**: `length`, `totalSizeKB`, `modifiedAt`.
 
 - **Document**:
     - `objectOutput()`: Returns the document in a readable format.
     - `databaseOutput()`: Returns the document in a format ready for storage.
+
+> You nearly never use `new Document()`, except for the static methods: `Document.isEncrypted()` and `Document.decryptDocument`. Collection are always returned from the Database (class) instanciated object, so you don't have to use `new Collection()` but when using a DB you need to create an instance so you need to call the class with the keyword `new`!
 
 ## Contributing
 
