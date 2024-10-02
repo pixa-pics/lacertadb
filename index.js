@@ -239,6 +239,43 @@ class IndexedDBUtility {
         });
     }
 }
+
+class LocalStorageUtility {
+    /**
+     * Get an item from localStorage.
+     * @param {string} key - The key to retrieve.
+     * @returns {any} - The parsed value from localStorage.
+     */
+    static getItem(key) {
+        const value = localStorage.getItem(key) || "";
+        return value ? JOYSON.parse(value) : null;
+    }
+
+    /**
+     * Set an item in localStorage.
+     * @param {string} key - The key to set.
+     * @param {any} value - The value to store.
+     */
+    static setItem(key, value) {
+        localStorage.setItem(key, JOYSON.stringify(value));
+    }
+
+    /**
+     * Remove an item from localStorage.
+     * @param {string} key - The key to remove.
+     */
+    static removeItem(key) {
+        localStorage.removeItem(key);
+    }
+
+    /**
+     * Clear all items from localStorage.
+     */
+    static clear() {
+        localStorage.clear();
+    }
+}
+
 class Document {
     constructor(data, encryptionKey = null) {
         this._id = data._id || this._generateId();
@@ -294,7 +331,6 @@ class Document {
                 }
             });
         });
-        console.log(decryptedData)
         // Unpack the decrypted data
         const unpackedData = JOYSON.unpack(decryptedData);
         return {
@@ -435,6 +471,43 @@ class Document {
         };
     }
 }
+
+class Settings {
+    constructor(dbName) {
+        this.dbName = dbName;
+        this.settingsKey = `db_${this.dbName}_settings`;
+        this.settings = this._loadSettings();
+    }
+
+    _loadSettings() {
+        const settings = LocalStorageUtility.getItem(this.settingsKey);
+        return settings ? JOYSON.parse(settings) : {};
+    }
+
+    _saveSettings() {
+        LocalStorageUtility.setItem(this.settingsKey, JOYSON.stringify(this.settings));
+    }
+
+    get(key) {
+        return this.settings[key];
+    }
+
+    set(key, value) {
+        this.settings[key] = value;
+        this._saveSettings();
+    }
+
+    remove(key) {
+        delete this.settings[key];
+        this._saveSettings();
+    }
+
+    clear() {
+        this.settings = {};
+        this._saveSettings();
+    }
+}
+
 class Database {
     constructor(dbName) {
         this.dbName = dbName;
@@ -446,64 +519,59 @@ class Database {
             totalSizeKB: 0,
             modified: Date.now(),
         };
-        this._metadataStoreName = "__lacerta_db__"
+        this.settings = new Settings(dbName);
     }
 
     async init() {
+        // Load metadata from localStorage
+        this._loadMetadata();
+
         // Open the database
         this.db = await IndexedDBUtility.openDatabase(this.dbName, undefined, (db, oldVersion, newVersion) => {
             this._upgradeDatabase(db, oldVersion, newVersion);
         });
-        // Load metadata
-        await this._loadMetadata();
+
+        // Initialize collections
+        for (const collectionName in this.metadata.collections) {
+            const collection = new Collection(this, collectionName);
+            await collection.init();
+            this.collections.set(collectionName, collection);
+        }
     }
 
-    async _loadMetadata() {
-        // Load metadata from an object store in the database
-        if (!this.db.objectStoreNames.contains(this._metadataStoreName)) {
-            console.log('No metadata found, initializing new metadata');
-            // Initialize new metadata store
-            await this._saveMetadata(true);
+    _loadMetadata() {
+        // Load metadata from localStorage
+        const metadata = LocalStorageUtility.getItem(`db_${this.dbName}_metadata`);
+        if (metadata) {
+            this.metadata = metadata;
         } else {
-            // Load metadata
-            const metadata = await IndexedDBUtility.performTransaction(this.db, this._metadataStoreName, 'readonly', (store) => {
-                return IndexedDBUtility.get(store, this.dbName);
-            });
-            if (metadata) {
-                this.metadata = metadata;
-            }
+            console.log('No metadata found, initializing new metadata');
+            // Save the initial metadata
+            this._saveMetadata();
         }
     }
 
-    async _saveMetadata(isNew = false) {
-        // Save metadata to an object store in the database
-        if (isNew && !this.db.objectStoreNames.contains(this._metadataStoreName)) {
-            const newVersion = this.db.version + 1;
-            this.db.close();
-            this.db = await IndexedDBUtility.openDatabase(this.dbName, newVersion, (db, oldVersion, newVersion) => {
-                if (!db.objectStoreNames.contains(this._metadataStoreName)) {
-                    db.createObjectStore(this._metadataStoreName, { keyPath: 'name' });
-                }
-            });
+    _saveMetadata() {
+        // Save metadata to localStorage
+        LocalStorageUtility.setItem(`db_${this.dbName}_metadata`, this.metadata);
+    }
+
+    _createDataStores(db) {
+        for (const collectionName of this.collections.keys()) {
+            this._createDataStore(db, collectionName);
         }
-        // Now save the metadata
-        await IndexedDBUtility.performTransaction(this.db, this._metadataStoreName, 'readwrite', (store) => {
-            return IndexedDBUtility.add(store, this.metadata);
-        });
+    }
+
+    _createDataStore(db, collectionName) {
+        if (!db.objectStoreNames.contains(collectionName)) {
+            db.createObjectStore(collectionName, { keyPath: '_id' });
+        }
     }
 
     _upgradeDatabase(db, oldVersion, newVersion) {
         console.log(`Upgrading database "${this.dbName}" from version ${oldVersion} to ${newVersion}`);
-        // Create this._metadataStoreName object store if it doesn't exist
-        if (!db.objectStoreNames.contains(this._metadataStoreName)) {
-            db.createObjectStore(this._metadataStoreName, { keyPath: 'name' });
-        }
         // Create object stores for collections if they don't exist
-        for (const collectionName of this.collections.keys()) {
-            if (!db.objectStoreNames.contains(collectionName)) {
-                db.createObjectStore(collectionName, { keyPath: '_id' });
-            }
-        }
+        this._createDataStores(db);
     }
 
     async createCollection(collectionName) {
@@ -516,9 +584,7 @@ class Database {
             const newVersion = this.db.version + 1;
             this.db.close();
             this.db = await IndexedDBUtility.openDatabase(this.dbName, newVersion, (db, oldVersion, newVersion) => {
-                if (!db.objectStoreNames.contains(collectionName)) {
-                    db.createObjectStore(collectionName, { keyPath: '_id' });
-                }
+                this._createDataStore(db, collectionName);
             });
         }
         // Create a new Collection instance
@@ -527,7 +593,7 @@ class Database {
         this.collections.set(collectionName, collection);
         // Update metadata
         this.metadata.collections[collectionName] = collection.metadata;
-        await this._saveMetadata();
+        this._saveMetadata();
         return collection;
     }
 
@@ -543,7 +609,7 @@ class Database {
         this.collections.delete(collectionName);
         // Update metadata
         delete this.metadata.collections[collectionName];
-        await this._saveMetadata();
+        this._saveMetadata();
     }
 
     async getCollection(collectionName) {
@@ -573,6 +639,10 @@ class Database {
     async deleteDatabase() {
         await this.close();
         await IndexedDBUtility.deleteDatabase(this.dbName);
+        // Remove metadata from localStorage
+        LocalStorageUtility.removeItem(`db_${this.dbName}_metadata`);
+        // Remove settings from localStorage
+        this.settings.clear();
     }
 }
 
@@ -586,7 +656,7 @@ class Collection {
             length: 0,
             created: Date.now(),
             modified: Date.now(),
-            documents: {}, // Added 'documents' property
+            documents: {}, // Stores document sizes
         };
     }
 
@@ -597,7 +667,7 @@ class Collection {
         } else {
             // Collection metadata not found, initialize new
             this.database.metadata.collections[this.collectionName] = this.metadata;
-            await this.database._saveMetadata();
+            this.database._saveMetadata();
         }
     }
 
@@ -611,38 +681,35 @@ class Collection {
         const docSizeKB = docData.packedData.byteLength / 1024;
 
         // Update metadata
-        if(!this.metadata.documents[docData._id]){
+        if (!this.metadata.documents[docData._id]) {
             this.metadata.length += 1;
             this.metadata.sizeKB += docSizeKB;
             this.metadata.modified = Date.now();
-            this.metadata.documents[docData._id] = docSizeKB; // Store size in bytes;
-        }else {
+            this.metadata.documents[docData._id] = docSizeKB; // Store size in KB
+        } else {
             const previousDocSizeKB = this.metadata.documents[docData._id];
-            this.metadata.sizeKB += previousDocSizeKB - docSizeKB;
+            this.metadata.sizeKB += docSizeKB - previousDocSizeKB;
             this.metadata.modified = Date.now();
-            this.metadata.documents[docData._id] = docSizeKB; // Store size in bytes;
+            this.metadata.documents[docData._id] = docSizeKB; // Update size in KB
         }
 
         // Update database metadata
         this.database.metadata.collections[this.collectionName] = this.metadata;
         this.database.metadata.totalSizeKB = Object.values(this.database.metadata.collections).reduce((v, o) => v + o.sizeKB, 0);
         this.database.metadata.modified = Date.now();
-        await this.database._saveMetadata();
+        this.database._saveMetadata();
     }
 
     async deleteDocument(docId) {
         // Get the document size before deleting
-        const docData = await IndexedDBUtility.performTransaction(this.database.db, this.collectionName, 'readonly', (store) => {
-            return IndexedDBUtility.get(store, docId);
-        });
-        if (!docData) {
-            throw new Error(`Document with ID ${docId} not found.`);
+        const docSizeKB = this.metadata.documents[docId] || 0;
+
+        if (!docSizeKB) {
+            return false;
         }
         await IndexedDBUtility.performTransaction(this.database.db, this.collectionName, 'readwrite', (store) => {
             return IndexedDBUtility.delete(store, docId);
         });
-
-        const docSizeKB = docData.packedData.byteLength / 1024;
 
         // Update metadata
         this.metadata.length -= 1;
@@ -654,7 +721,8 @@ class Collection {
         this.database.metadata.collections[this.collectionName] = this.metadata;
         this.database.metadata.totalSizeKB = Object.values(this.database.metadata.collections).reduce((v, o) => v + o.sizeKB, 0);
         this.database.metadata.modified = Date.now();
-        await this.database._saveMetadata();
+        this.database._saveMetadata();
+        return true;
     }
 
     async getDocument(docId, encryptionKey = null) {
@@ -696,9 +764,8 @@ class Collection {
         });
         return results;
     }
-
-    // Additional methods like updateDocument, bulk operations, etc., can be added here
 }
+
 
 var LacertaDB = {
     Collection,
