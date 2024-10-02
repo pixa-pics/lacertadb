@@ -1,9 +1,5 @@
 # LacertaDB
 
-**LacertaDB** - Secure, compressed, client-side storage made simple.
-
-![LacertaDB Javascript Logo](https://raw.githubusercontent.com/pixa-pics/lacertadb/refs/heads/main/lacerta.png)
-
 LacertaDB is a browser-based, high-performance database built on `IndexedDB` with a focus on flexibility, encryption, compression, and automatic metadata synchronization using the faster `LocalStorage`. It is designed to simplify client-side storage for web applications, offering robust features like built-in data security and performance optimizations.
 
 ## Key Features
@@ -98,10 +94,3 @@ For any issues, questions, or suggestions, please visit our [GitHub Issues page]
 ---
 
 LacertaDB is designed to make client-side storage secure, efficient, and easy to use. With dynamic metadata management, flexible document handling, and built-in support for encryption and compression, it’s the ideal solution for modern web applications.
-
-## License
-
-This project is licensed under the MIT License.
-
----
-
