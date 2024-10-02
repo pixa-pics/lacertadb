@@ -1,6 +1,6 @@
 {
   "name": "lacertadb",
-  "version": "0.4.1",
+  "version": "0.5.0",
   "description": "LacertaDB! JAVASCRIPT BROWSER DATABASE: IndexedDB for data and LocalStorage for metadata. So Simple, Very Fast, Well Secure.",
   "devDependencies": {
     "path": "~0.12.7",
@@ -27,8 +27,6 @@
     "encrypt",
     "compress",
     "joyson",
-    "triplesec",
-    "snappy",
     "js",
     "fast",
     "storage",

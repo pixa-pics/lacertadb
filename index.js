@@ -19,26 +19,213 @@ SOFTWARE.
 */
 "use strict";
 import JOYSON from "joyson";
-import snappy from "snappyjs";
-import * as triplesec from "triplesec";
 
-triplesec.util.buffer_to_ui8a = function(b) {
-    var i, ret, _i, _ref;
-    ret = new Uint8Array(b.length);
-    for (i = _i = 0, _ref = b.length; 0 <= _ref ? _i < _ref : _i > _ref; i = 0 <= _ref ? ++_i : --_i) {
-        ret[i] = b.readUInt8(i);
-    }
-    return ret;
-};
+class BrowserCompressionUtility {
+    /**
+     * Compress a string or Uint8Array using Gzip.
+     * @param {Uint8Array|string} input - The input data to compress.
+     * @returns {Promise<Uint8Array>} - A promise that resolves to the compressed data as a Uint8Array.
+     */
+    static async compress(input) {
+        const data = typeof input === "string" ? new TextEncoder().encode(input) : input;
+        const stream = new CompressionStream('deflate');
+        const writer = stream.writable.getWriter();
 
-triplesec.util.ui8a_to_buffer = function(v) {
-    var i, ret, _i, _ref;
-    ret = triplesec.Buffer.alloc(v.length);
-    for (i = _i = 0, _ref = v.length; 0 <= _ref ? _i < _ref : _i > _ref; i = 0 <= _ref ? ++_i : --_i) {
-        ret.writeUInt8(v[i], i);
+        writer.write(data);
+        writer.close();
+
+        return await this._streamToUint8Array(stream.readable);
     }
-    return ret;
-};
+
+    /**
+     * Decompress a Gzip-compressed Uint8Array.
+     * @param {Uint8Array} compressedData - The compressed data to decompress.
+     * @returns {Promise<Uint8Array>} - A promise that resolves to the decompressed data as a Uint8Array.
+     */
+    static async decompress(compressedData) {
+        const stream = new DecompressionStream('deflate');
+        const writer = stream.writable.getWriter();
+
+        writer.write(compressedData);
+        writer.close();
+
+        return await this._streamToUint8Array(stream.readable);
+    }
+
+    /**
+     * Helper function to convert a ReadableStream to a Uint8Array.
+     * @param {ReadableStream} readableStream - The readable stream to convert.
+     * @returns {Promise<Uint8Array>} - A promise that resolves to a Uint8Array.
+     */
+    static async _streamToUint8Array(readableStream) {
+        const reader = readableStream.getReader();
+        const chunks = [];
+        let totalLength = 0;
+
+        // Read all chunks from the stream
+        while (true) {
+            const { value, done } = await reader.read();
+            if (done) break;
+            chunks.push(value);
+            totalLength += value.length;
+        }
+
+        // Merge all chunks into a single Uint8Array
+        const result = new Uint8Array(totalLength);
+        let offset = 0;
+        for (const chunk of chunks) {
+            result.set(chunk, offset);
+            offset += chunk.length;
+        }
+
+        return result;
+    }
+}
+
+class BrowserEncryptionUtility {
+    /**
+     * Encrypt data using multiple layers of encryption, returning everything as a single Uint8Array.
+     * @param {Uint8Array} data - The data to be encrypted.
+     * @param {string} password - The password to derive the encryption key.
+     * @returns {Promise<Uint8Array>} - A Uint8Array containing IV, salt, and encrypted data.
+     */
+    static async encrypt(data, password) {
+        // Generate salt and derive key from the password
+        const salt = crypto.getRandomValues(new Uint8Array(16)); // Random salt
+        const key = await this._deriveKey(password, salt);
+
+        // Generate IV for AES-GCM
+        const iv = crypto.getRandomValues(new Uint8Array(12)); // Random IV
+
+        // Add a checksum to the data for integrity
+        const checksum = await this._generateChecksum(data);
+        const combinedData = this._combineDataAndChecksum(data, checksum);
+
+        // First layer of AES-GCM encryption
+        const encryptedData = await crypto.subtle.encrypt(
+            { name: "AES-GCM", iv: iv },
+            key,
+            combinedData // Data + checksum
+        );
+
+        // Wrap everything into a Uint8Array: [salt, iv, encryptedData]
+        return this._wrapIntoUint8Array(salt, iv, new Uint8Array(encryptedData));
+    }
+
+    /**
+     * Decrypt data, verifying integrity with a checksum, and return the original Uint8Array.
+     * @param {Uint8Array} wrappedData - The Uint8Array that contains the salt, IV, and encrypted data.
+     * @param {string} password - The password to derive the decryption key.
+     * @returns {Promise<Uint8Array>} - The original decrypted data.
+     */
+    static async decrypt(wrappedData, password) {
+        // Extract the salt, IV, and encrypted data from the Uint8Array
+        const { salt, iv, encryptedData } = this._unwrapUint8Array(wrappedData);
+
+        // Derive the key using the same salt
+        const key = await this._deriveKey(password, salt);
+
+        // Decrypt the data
+        const decryptedData = await crypto.subtle.decrypt(
+            { name: "AES-GCM", iv: iv },
+            key,
+            encryptedData
+        );
+
+        // Separate the checksum and the original data
+        const decryptedUint8Array = new Uint8Array(decryptedData);
+        const { data, checksum } = this._separateDataAndChecksum(decryptedUint8Array);
+
+        // Verify the checksum to ensure data integrity
+        const validChecksum = await this._generateChecksum(data);
+        if (!this._verifyChecksum(validChecksum, checksum)) {
+            throw new Error("Data integrity check failed. The data has been tampered with.");
+        }
+
+        // Return the original data
+        return data;
+    }
+
+    // Private method to derive a cryptographic key from the password and salt
+    static async _deriveKey(password, salt) {
+        const encoder = new TextEncoder();
+        const keyMaterial = await crypto.subtle.importKey(
+            "raw",
+            encoder.encode(password), // Password converted to Uint8Array
+            { name: "PBKDF2" },
+            false,
+            ["deriveKey"]
+        );
+
+        // Derive a key using PBKDF2
+        return await crypto.subtle.deriveKey(
+            {
+                name: "PBKDF2",
+                salt: salt, // Salt
+                iterations: 150000, // Increased iterations for stronger security
+                hash: "SHA-512" // Using SHA-512 for key derivation
+            },
+            keyMaterial,
+            {
+                name: "AES-GCM",
+                length: 256 // AES-GCM with a 256-bit key
+            },
+            false,
+            ["encrypt", "decrypt"]
+        );
+    }
+
+    // Private method to generate a checksum using SHA-256
+    static async _generateChecksum(data) {
+        return new Uint8Array(
+            await crypto.subtle.digest("SHA-256", data) // Generate SHA-256 hash
+        );
+    }
+
+    // Verify the checksum
+    static _verifyChecksum(generatedChecksum, originalChecksum) {
+        if (generatedChecksum.length !== originalChecksum.length) return false;
+        for (let i = 0; i < generatedChecksum.length; i++) {
+            if (generatedChecksum[i] !== originalChecksum[i]) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    // Combine the checksum and data
+    static _combineDataAndChecksum(data, checksum) {
+        const combined = new Uint8Array(data.length + checksum.length);
+        combined.set(data); // Set original data first
+        combined.set(checksum, data.length); // Append checksum
+        return combined;
+    }
+
+    // Separate the checksum and data after decryption
+    static _separateDataAndChecksum(combinedData) {
+        const dataLength = combinedData.length - 32; // SHA-256 checksum is 32 bytes
+        const data = combinedData.slice(0, dataLength);
+        const checksum = combinedData.slice(dataLength);
+        return { data, checksum };
+    }
+
+    // Wrap salt, IV, and encrypted data into a single Uint8Array
+    static _wrapIntoUint8Array(salt, iv, encryptedData) {
+        const result = new Uint8Array(salt.length + iv.length + encryptedData.length);
+        result.set(salt, 0); // Add salt at the beginning
+        result.set(iv, salt.length); // Add IV after salt
+        result.set(encryptedData, salt.length + iv.length); // Add encrypted data
+        return result;
+    }
+
+    // Unwrap salt, IV, and encrypted data from a Uint8Array
+    static _unwrapUint8Array(wrappedData) {
+        const salt = wrappedData.slice(0, 16); // First 16 bytes are salt
+        const iv = wrappedData.slice(16, 28); // Next 12 bytes are IV (16+12=28)
+        const encryptedData = wrappedData.slice(28); // Remaining bytes are the encrypted data
+        return { salt, iv, encryptedData };
+    }
+}
 
 class IndexedDBUtility {
     /**
@@ -465,9 +652,14 @@ class CollectionMetadata {
     get name() {
         return this._collectionName;
     }
+
+    get keys() {
+        return Object.keys(this.documentSizes);
+    }
+
     // Getter for collection name
     get collectionName() {
-        return this._collectionName;
+        return this.name;
     }
 
     // Getter for sizeKB
@@ -509,18 +701,24 @@ class CollectionMetadata {
         this._databaseMetadata = m;
     }
     // Methods to add, update, delete documents
+    get documentSizes(){return this.metadata.documentSizes;}
+    get documentModifiedAt(){return this.metadata.documentModifiedAt;}
+    get documentPermanent(){return this.metadata.documentSizes;}
 
+    set documentSizes(v){ this.metadata.documentSizes = v;}
+    set documentModifiedAt(v){ this.metadata.documentModifiedAt = v;}
+    set documentPermanent(v){ this.metadata.documentSizes = v;}
     // Add or update a document
     updateDocument(docId, docSizeKB, isPermanent = false) {
-        const isNewDocument = !(docId in this.metadata.documentSizes);
-        const previousDocSizeKB = this.metadata.documentSizes[docId] || 0;
+        const isNewDocument = this.keys.indexOf(docId) === -1;
+        const previousDocSizeKB = this.documentSizes[docId] || 0;
         const sizeKBChange = docSizeKB - previousDocSizeKB;
         const lengthChange = isNewDocument ? 1 : 0;
 
         // Update document metadata
-        this.metadata.documentSizes[docId] = docSizeKB;
-        this.metadata.documentModifiedAt[docId] = Date.now();
-        this.metadata.documentPermanent[docId] = isPermanent ? 1: 0;
+        this.documentSizes[docId] = docSizeKB;
+        this.documentModifiedAt[docId] = Date.now();
+        this.documentPermanent[docId] = isPermanent ? 1: 0;
 
         // Update collection metadata
         this.metadata.sizeKB += sizeKBChange;
@@ -533,18 +731,18 @@ class CollectionMetadata {
 
     // Delete a document
     deleteDocument(docId) {
-        if (!(docId in this.metadata.documentSizes)) {
+        if (this.keys.indexOf(docId) === -1) {
             return false;
         }
 
-        const docSizeKB = this.metadata.documentSizes[docId];
+        const docSizeKB = this.documentSizes[docId];
         const sizeKBChange = -docSizeKB;
         const lengthChange = -1;
 
         // Remove document metadata
-        delete this.metadata.documentSizes[docId];
-        delete this.metadata.documentModifiedAt[docId];
-        delete this.metadata.documentPermanent[docId];
+        delete this.documentSizes[docId];
+        delete this.documentModifiedAt[docId];
+        delete this.documentPermanent[docId];
 
         // Update collection metadata
         this.metadata.sizeKB += sizeKBChange;
@@ -820,20 +1018,10 @@ class Document {
         if (!Document.isEncrypted(documentData)) {
             throw new Error('Document is not encrypted.');
         }
-        const decryptedData = await new Promise(function (resolve, reject){
-            triplesec.decrypt({
-                key: triplesec.Buffer.from(encryptionKey),
-                data: triplesec.util.ui8a_to_buffer(documentData.packedData)
-            }, function (err, res){
-                if(!err){
-                    resolve(triplesec.util.buffer_to_ui8a(res));
-                }else {
-                    reject(err);
-                }
-            });
-        });
+        const decryptedData = await BrowserEncryptionUtility.decrypt(documentData.packedData, encryptionKey);
         // Unpack the decrypted data
         const unpackedData = JOYSON.unpack(decryptedData);
+
         return {
             _id: documentData._id,
             _created: documentData._created,
@@ -885,50 +1073,22 @@ class Document {
     }
 
     // Private methods for encryption, decryption, compression, decompression.
-
     async _encryptData(data) {
-
         const encryptionKey = this.encryptionKey;
-        const result = new Promise(function (resolve, reject){
-            triplesec.encrypt({
-                key: triplesec.Buffer.from(encryptionKey),
-                data: triplesec.util.ui8a_to_buffer(data)
-            }, function (err, res){
-                if(!err){
-                    resolve(triplesec.util.buffer_to_ui8a(res));
-                }else {
-                    reject(err);
-                }
-            });
-        });
-
-        return await result;
+        return await BrowserEncryptionUtility.encrypt(data, encryptionKey);
     }
 
     async _decryptData(data) {
         const encryptionKey = this.encryptionKey;
-        const result = new Promise(function (resolve, reject){
-            triplesec.decrypt({
-                key: triplesec.Buffer.from(encryptionKey),
-                data: triplesec.util.ui8a_to_buffer(data)
-            }, function (err, res){
-                if(!err){
-                    resolve(triplesec.util.buffer_to_ui8a(res));
-                }else {
-                    reject(err);
-                }
-            });
-        });
-
-        return await result;
+        return await BrowserEncryptionUtility.decrypt(data, encryptionKey);
     }
 
     async _compressData(data) {
-        return snappy.compress(data);
+        return await BrowserCompressionUtility.compress(data);
     }
 
     async _decompressData(data) {
-        return snappy.uncompress(data);
+        return await BrowserCompressionUtility.decompress(data);
     }
 
     _generateId() {
@@ -1078,6 +1238,10 @@ class Collection {
         return this._collectionName;
     }
 
+    get keys() {
+        return Object.keys(this.metadata.documentSizes || {});
+    }
+
     get settings() {
         return this._settings;
     }
@@ -1106,12 +1270,20 @@ class Collection {
         this._metadata = m;
     }
 
+    get sizeKB() {
+        return this.metadata.sizeKB;
+    }
+
+    get length() {
+        return this.metadata.length;
+    }
+
     get totalSizeKB() {
-        return this.metadata.totalSizeKB;
+        return this.sizeKB;
     }
 
     get totalLength() {
-        return this.metadata.totalLength;
+        return this.length;
     }
 
     get modifiedAt() {
@@ -1141,7 +1313,7 @@ class Collection {
         const docData = await document.databaseOutput();
         const docId = docData._id;
         const isPermanent = docData._permanent || false;
-        let isNewDocument = !(docId in this.metadata.data.documentSizes);
+        let isNewDocument = !(docId in this.metadata.documentSizes);
 
         try {
             if (isNewDocument) {
@@ -1156,7 +1328,7 @@ class Collection {
                 });
             }
         } catch (error) {
-            if (isNewDocument && error.includes('Failed to insert record:')) {
+            if (isNewDocument) {
                 // Record already exists, so we update it
                 await IndexedDBUtility.performTransaction(this.database.db, this.name, 'readwrite', (store) => {
                     return IndexedDBUtility.put(store, docData);
@@ -1177,7 +1349,7 @@ class Collection {
         await this._maybeFreeSpace();
         return isNewDocument;
     }
-
+    
     async getDocument(docId, encryptionKey = null) {
         // Check if the document exists in metadata
         if (!(docId in this.metadata.data.documentSizes)) {
@@ -1216,31 +1388,31 @@ class Collection {
             return results; // Return empty array if no documents exist
         }
 
-        await IndexedDBUtility.performTransaction(this.database.db, this.name, 'readonly', async (store) => {
-            const getPromises = existingIds.map(id => {
+        const getPromises = await IndexedDBUtility.performTransaction(this.database.db, this.name, 'readonly', async (store) => {
+            return existingIds.map(id => {
                 return IndexedDBUtility.get(store, id);
             });
-
-            const docsData = await Promise.all(getPromises);
-
-            for (const docData of docsData) {
-                if (docData) {
-                    let document;
-                    if (Document.isEncrypted(docData)) {
-                        if (encryptionKey) {
-                            document = new Document(docData, encryptionKey);
-                        } else {
-                            // Skip encrypted documents if no key is provided
-                            continue;
-                        }
-                    } else {
-                        document = new Document(docData);
-                    }
-                    const object = await document.objectOutput();
-                    results.push(object);
-                }
-            }
         });
+
+        const docsData = await Promise.all(getPromises);
+
+        for (const docData of docsData) {
+            if (docData) {
+                let document;
+                if (Document.isEncrypted(docData)) {
+                    if (encryptionKey) {
+                        document = new Document(docData, encryptionKey);
+                    } else {
+                        // Skip encrypted documents if no key is provided
+                        continue;
+                    }
+                } else {
+                    document = new Document(docData);
+                }
+                const object = await document.objectOutput();
+                results.push(object);
+            }
+        }
 
         return results;
     }
@@ -1374,9 +1546,7 @@ class Collection {
     }
 }
 
-
 var LacertaDB = {
-    Collection,
     Database,
     Document
 };

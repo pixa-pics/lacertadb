@@ -1,6 +1,6 @@
-# LacertaDB (Version: 0.4.1)
+# LacertaDB (Version: 0.5.0)
 
-**LacertaDB** - Secure, compressed, client-side storage made simple. (Only works from the verion 0.4.1)
+**LacertaDB** - Secure, compressed, client-side storage made simple. (Works better above 0.5.0)
 
 ![LacertaDB Javascript Logo](https://raw.githubusercontent.com/pixa-pics/lacertadb/refs/heads/main/lacerta.png)
 
@@ -9,7 +9,7 @@ LacertaDB is a browser-based, high-performance database built on `IndexedDB` wit
 ## Key Features
 
 - **Automatic Metadata Tracking**: Metadata, including database size, number of documents, and modification times, are updated automatically, keeping your data organized.
-- **Compression & Encryption**: Compress data using Snappy and encrypt it with Triplesec for secure and efficient storage.
+- **Compression & Encryption**: Compress data using the browser and encrypt it with it too for secure and efficient storage.
 - **Flexible Document Handling**: Supports adding, updating, retrieving, and deleting documents seamlessly.
 - **Built-in Collection Management**: Automatically manage and query collections, with automatic synchronization of metadata.
 - **Dynamic Metadata Access**: Get metadata like total database size, collection length, or last modification time using simple getters like `db.totalSizeKB` and `collection.length`.
@@ -28,19 +28,20 @@ npm install lacertadb
 Below is a quick example demonstrating LacertaDB’s features:
 
 ```javascript
-import { Database } from "lacertadb";
+import { Database, Document } from "lacertadb";
 
-async function runExample() {
+
+(async function runExample() {
     // Initialize the database
     const db = new Database("interview");
     await db.init();
 
     // Create or get a collection
-    const collection = await db.createCollection("humans", {limitSizeKB: 4096});
-    const collection2 = await db.createCollection("reptilians");
+    const collection = await db.createCollection("humanoids", {limitSizeKB: 100 * 1024});
 
     // Add a new document (returns true if new, false if updated)
-    const doc = { _id: "myAccount", data: { name: "Alice", age: 30 }, _compressed: true, _permanent: false };
+    const doc = {_id:"myAccount",data:{id:28,name:"steemit",owner:{weight_threshold:1,account_auths:[],key_auths:[["STM6Ezkzey8FWoEnnHHP4rxbrysJqoMmzwR2EdoD5p7FDsF64qxbQ",1],["STM7TCZKisQnvR69CK9BaL6W4SJn2cXYwkfWYRicoVGGzhtFswxMH",1]]},active:{weight_threshold:1,account_auths:[],key_auths:[["STM5VkLha96X5EQu3HSkJdD8SEuwazWtZrzLjUT6Sc5sopgghBYrz",1],["STM7u1BsoqLaoCu9XHi1wjWctLWSFCuvyagFjYMfga4QNWEjP7d3U",1]]},posting:{weight_threshold:1,account_auths:[],key_auths:[["STM6kXdRbWgoH9E4hvtTZeaiSbY8FmGXQavfJZ2jzkKjT5cWYgMBS",1],["STM6tDMSSKa8Bd9ss7EjqhXPEHTWissGXJJosAU94LLpC5tsCdo61",1]]},memo_key:"STM5jZtLoV8YbxCxr4imnbWn61zMB24wwonpnVhfXRmv7j6fk3dTH",json_metadata:"",proxy:"",last_owner_update:"2018-05-31T23:32:06",last_account_update:"2018-05-31T23:32:06",created:"2016-03-24T17:00:21",mined:!0,recovery_account:"steem",last_account_recovery:"1970-01-01T00:00:00",reset_account:"null",comment_count:0,lifetime_vote_count:0,post_count:1,can_vote:!0,voting_manabar:{current_mana:"69835912701503862",last_update_time:1538171805},balance:{amount:"2806644634",precision:3,nai:"@@000000021"},savings_balance:{amount:"0",precision:3,nai:"@@000000021"},sbd_balance:{amount:"8716535",precision:3,nai:"@@000000013"},sbd_seconds:"0",sbd_seconds_last_update:"2018-11-12T02:39:39",sbd_last_interest_payment:"2018-11-12T02:39:39",savings_sbd_balance:{amount:"0",precision:3,nai:"@@000000013"},savings_sbd_seconds:"0",savings_sbd_seconds_last_update:"1970-01-01T00:00:00",savings_sbd_last_interest_payment:"1970-01-01T00:00:00",savings_withdraw_requests:0,reward_sbd_balance:{amount:"0",precision:3,nai:"@@000000013"},reward_steem_balance:{amount:"0",precision:3,nai:"@@000000021"},reward_vesting_balance:{amount:"0",precision:6,nai:"@@000000037"},reward_vesting_steem:{amount:"0",precision:3,nai:"@@000000021"},vesting_shares:{amount:"90039851836689703",precision:6,nai:"@@000000037"},delegated_vesting_shares:{amount:"20203939135185841",precision:6,nai:"@@000000037"},received_vesting_shares:{amount:"0",precision:6,nai:"@@000000037"},vesting_withdraw_rate:{amount:"0",precision:6,nai:"@@000000037"},next_vesting_withdrawal:"1969-12-31T23:59:59",withdrawn:0,to_withdraw:0,withdraw_routes:0,curation_rewards:0,posting_rewards:3548,proxied_vsf_votes:["14953279511",0,0,0],witnesses_voted_for:0,last_post:"2016-03-30T18:30:18",last_root_post:"2016-03-30T18:30:18",last_vote_time:"2016-12-04T23:10:57",post_bandwidth:0,pending_claimed_accounts:0,is_smt:!1},_compressed:!0,_permanent:!0};
+    
     const isNewDocument = await collection.addDocument(doc, "password");
     console.log("Document added (new):", isNewDocument);
     await collection.addDocument({data: "hello"});
@@ -49,13 +50,24 @@ async function runExample() {
     const retrieved = await collection.getDocument(doc._id, "password");
     console.log("Retrieved Document:", retrieved);
 
+    const docs = new Array(50);
+    for(let i = 0; i < 50; i++){
+        docs[i] = Object.assign(doc, {_id: ""+i.toString(16), _compressed: true, _permanent: true});
+        await collection.addDocument(docs[i]);
+    }
+
+    // Retrieve the document by its ID
+    const retrievedBatch = await collection.getDocuments(["a", "b", "9", "11", "c"]);
+    console.log("Retrieved Documents:", retrievedBatch);
+
     // Query documents based on a field
-    const results = await collection.query({ age: 30 });
+    const results = await collection.query();
     console.log("Query Results:", results);
 
     // Access metadata through getters
     console.log("Total DB Size (KB):", db.totalSizeKB);
-    console.log("Collection Document Count:", collection.length);
+    console.log("All id in collection", collection.keys);
+    console.log("Collection Document Count:", collection.totalLength);
 
     // Delete a document (returns true if deleted, false otherwise)
     const isDeleted = await collection.deleteDocument(doc._id);
@@ -63,9 +75,7 @@ async function runExample() {
 
     // Close the database when done
     await db.close();
-}
-
-runExample().catch(console.error);
+})()
 ```
 
 ## API Overview
@@ -82,11 +92,10 @@ LacertaDB provides a rich API to manage your data with ease:
 - **Collection**:
     - `addDocument(doc)`: Adds a new document or updates an existing one.
     - `getDocument(id)`: Retrieves a document by its ID.
-    - `getDocuments(ids)`: Retrieves documents by their IDs.
     - `deleteDocument(id)`: Deletes a document by its ID.
     - `deleteDocuments(ids)`: Deletes documents by their IDs.
     - `query(filter)`: Queries documents by fields (slow).
-    - **Getters**: `length`, `totalSizeKB`, `modifiedAt`.
+    - **Getters**: `length`, `sizeKB`, `modifiedAt`.
 
 - **Document**:
     - `objectOutput()`: Returns the document in a readable format.
