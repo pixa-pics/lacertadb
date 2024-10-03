@@ -1,7 +1,7 @@
 {
   "name": "lacertadb",
-  "version": "0.5.0",
-  "description": "LacertaDB! JAVASCRIPT BROWSER DATABASE: IndexedDB for data and LocalStorage for metadata. So Simple, Very Fast, Well Secure.",
+  "version": "0.6.0",
+  "description": "LacertaDB! The Easy JS DB. IndexedDB for data and LocalStorage for metadata and top document.",
   "devDependencies": {
     "path": "~0.12.7",
     "uglifyjs-3-webpack-plugin": "~1.2.4",

@@ -8,6 +8,7 @@ LacertaDB is a browser-based, high-performance database built on `IndexedDB` wit
 
 ## Key Features
 
+- **Quick Store Functionality**: When you open a progressive web application, you don't want to rely on indexedDB to load settings such as theme and locales, because it is slow. Instead you access those kind of data from localstorage which has no initialization needed.
 - **Automatic Metadata Tracking**: Metadata, including database size, number of documents, and modification times, are updated automatically, keeping your data organized.
 - **Compression & Encryption**: Compress data using the browser and encrypt it with it too for secure and efficient storage.
 - **Flexible Document Handling**: Supports adding, updating, retrieving, and deleting documents seamlessly.
@@ -34,6 +35,17 @@ import { Database, Document } from "lacertadb";
 (async function runExample() {
     // Initialize the database
     const db = new Database("interview");
+    
+    // Database instance have a quick store
+    // You can use it before initiating the db
+    const docSetting = { _id: "settings", data: {theme: "light", locales: "fr-CH"}, _compressed: false, _permanent: true };
+    await db.quickStore.setDocument(docSetting);
+    const docBack = await db.quickStore.getDocument("settings");
+    // You can list the documents inside your quickstore
+    // 5MB is the limit for localstorage IN TOTAL
+    const docIds = db.quickStore.getAllKeys();
+    console.log(docBack, docIds)
+    
     await db.init();
 
     // Create or get a collection
@@ -83,6 +95,7 @@ import { Database, Document } from "lacertadb";
 LacertaDB provides a rich API to manage your data with ease:
 
 - **Database**:
+    - `quickStore`: Access DB root document before init.
     - `init()`: Initialize the database.
     - `createCollection(collectionName)`: Creates or retrieves a collection.
     - `getCollection(collectionName)`: Retrieves a collection.
@@ -90,8 +103,8 @@ LacertaDB provides a rich API to manage your data with ease:
     - **Getters**: `totalSizeKB`, `totalLength`, `modifiedAt`.
 
 - **Collection**:
-    - `addDocument(doc)`: Adds a new document or updates an existing one.
-    - `getDocument(id)`: Retrieves a document by its ID.
+    - `addDocument(doc, password)`: Adds a new document or updates an existing one and eventually encrypt it.
+    - `getDocument(id, password)`: Retrieves a document by its ID and optionaly decrypt it.
     - `deleteDocument(id)`: Deletes a document by its ID.
     - `deleteDocuments(ids)`: Deletes documents by their IDs.
     - `query(filter)`: Queries documents by fields (slow).
@@ -100,8 +113,13 @@ LacertaDB provides a rich API to manage your data with ease:
 - **Document**:
     - `objectOutput()`: Returns the document in a readable format.
     - `databaseOutput()`: Returns the document in a format ready for storage.
+    
+- **QuickStore**:
+    - `getDocument()`: Returns the document in a readable format.
+    - `deleteDocument()`: Deletes a document by its ID.
+    - `getAllKeys()`: Return a list of document's IDs.
 
-> You nearly never use `new Document()`, except for the static methods: `Document.isEncrypted()` and `Document.decryptDocument`. Collection are always returned from the Database (class) instanciated object, so you don't have to use `new Collection()` but when using a DB you need to create an instance so you need to call the class with the keyword `new`!
+> You nearly never use `new Document()`, except for the static methods: `Document.isEncrypted()` and `Document.decryptDocument` which you can call after getDocument if you didn't yet provided the password. Collection are always returned from the Database (class) instanciated object, so you don't have to use `new Collection()` but when using a DB you need to create an instance so you need to call the class with the keyword `new`!
 
 ## Contributing
 

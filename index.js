@@ -561,6 +561,11 @@ class DatabaseMetadata {
         return this.collections.get(collectionName);
     }
 
+    getCollectionMetadataData(collectionName) {
+        const metadata = this.getCollectionMetadata(collectionName);
+        return metadata ? metadata.getRawMetadata(): {}
+    }
+
     // Remove a collection's metadata
     removeCollectionMetadata(collectionName) {
         const collectionMetadata = this.collections.get(collectionName);
@@ -781,15 +786,142 @@ class CollectionMetadata {
     }
 }
 
-class Database {
+class QuickStore {
     constructor(dbName) {
+        this._dbName = dbName;
+        this._metadataKey = `lacertadb_${this._dbName}_fastdocs`;
+        this._documentKeyPrefix = 'lacertadb_fastdoc_';
+        this._metadata = this._loadMetadata();
+    }
+
+    _loadMetadata() {
+        const metadata = LocalStorageUtility.getItem(this._metadataKey);
+        if (metadata) {
+            return metadata;
+        } else {
+            // Initialize metadata
+            return {
+                totalSizeKB: 0,
+                totalLength: 0,
+                documentSizesKB: {}, // docId -> sizeKB
+                documentModificationTime: {}, // docId -> timestamp
+                documentPermanent: {}, // docId -> boolean
+            };
+        }
+    }
+
+    _saveMetadata() {
+        LocalStorageUtility.setItem(this._metadataKey, this._metadata);
+    }
+
+    async setDocument(documentData, encryptionKey = null) {
+        const document = new Document(documentData, encryptionKey);
+        await document.pack(); // Packs the data
+
+        const docId = document._id;
+        const isPermanent = document._permanent || false;
+        const dataToStore = JOYSON.stringify({
+            _id: document._id,
+            _created: document._created,
+            _modified: document._modified,
+            _permanent: document._permanent,
+            _encrypted: document._encrypted,
+            _compressed: document._compressed,
+            packedData: document.packedData, // Convert Uint8Array to Array for JSON
+        });
+
+        const key = this._documentKeyPrefix + docId;
+        localStorage.setItem(key, dataToStore);
+
+        const dataSizeKB = dataToStore.length / 1024;
+
+        const isNewDocument = !(docId in this._metadata.documentSizesKB);
+
+        if (isNewDocument) {
+            this._metadata.totalLength += 1;
+        } else {
+            // Adjust totalSizeKB
+            this._metadata.totalSizeKB -= this._metadata.documentSizesKB[docId];
+        }
+
+        this._metadata.documentSizesKB[docId] = dataSizeKB;
+        this._metadata.documentModificationTime[docId] = document._modified;
+        this._metadata.documentPermanent[docId] = isPermanent;
+
+        this._metadata.totalSizeKB += dataSizeKB;
+
+        this._saveMetadata();
+
+        return isNewDocument;
+    }
+
+    async deleteDocument(docId, force = false) {
+        const isPermanent = this._metadata.documentPermanent[docId] || false;
+        if (isPermanent && !force) {
+            return false;
+        }
+
+        const key = this._documentKeyPrefix + docId;
+        const docSizeKB = this._metadata.documentSizesKB[docId] || 0;
+
+        if (localStorage.getItem(key)) {
+            localStorage.removeItem(key);
+
+            delete this._metadata.documentSizesKB[docId];
+            delete this._metadata.documentModificationTime[docId];
+            delete this._metadata.documentPermanent[docId];
+
+            this._metadata.totalSizeKB -= docSizeKB;
+            this._metadata.totalLength -= 1;
+
+            this._saveMetadata();
+
+            return true;
+        } else {
+            return false;
+        }
+    }
+
+    getAllKeys() {
+        return Object.keys(this._metadata.documentSizesKB);
+    }
+
+    async getDocument(docId, encryptionKey = null) {
+        const key = this._documentKeyPrefix + docId;
+        const dataString = localStorage.getItem(key);
+
+        if (dataString) {
+            const docData = JOYSON.parse(dataString);
+            if (docData._encrypted) {
+                if (!encryptionKey) {
+                    throw new Error("Encryption key required to decrypt document");
+                }
+                const document = new Document(docData, encryptionKey);
+                return await document.objectOutput();
+            } else {
+                const document = new Document(docData);
+                return await document.objectOutput();
+            }
+        } else {
+            return null;
+        }
+    }
+}
+
+class Database {
+    constructor(dbName, settings = {}) {
         this._dbName = dbName;
         this._db = null; // IDBDatabase instance
         this._collections = new Map(); // collectionName -> Collection instance
         this._metadata = new DatabaseMetadata(dbName);
-        this._settings = new Settings(dbName);
+        this._settings = new Settings(dbName, settings);
+        this._quickStore = new QuickStore(this._dbName);
+        this._settings.init();
     }
 
+    get quickStore() {
+        return this._quickStore;
+    }
     async init() {
         // Open the database
         this.db = await IndexedDBUtility.openDatabase(this.name, undefined, (db, oldVersion, newVersion) => {
@@ -799,7 +931,7 @@ class Database {
         // Initialize collections
         const collectionNames = this.data.getCollectionNames();
         for (const collectionName of collectionNames) {
-            const collection = new Collection(this, collectionName);
+            const collection = new Collection(this, collectionName, this.settings);
             await collection.init();
             this.collections.set(collectionName, collection);
         }
@@ -823,7 +955,7 @@ class Database {
         this._createDataStores(db);
     }
 
-    async createCollection(collectionName, settings = {}) {
+    async createCollection(collectionName) {
         if (this.collections.has(collectionName)) {
             console.log(`Collection "${collectionName}" already exists.`);
             return this.collections.get(collectionName);
@@ -837,7 +969,7 @@ class Database {
             });
         }
         // Create a new Collection instance
-        const collection = new Collection(this, collectionName, settings);
+        const collection = new Collection(this, collectionName, this.settings);
         await collection.init();
         this.collections.set(collectionName, collection);
 
@@ -875,7 +1007,7 @@ class Database {
             // Check if the collection exists in the database
             if (this.db.objectStoreNames.contains(collectionName)) {
                 // Create a new Collection instance
-                const collection = new Collection(this, collectionName);
+                const collection = new Collection(this, collectionName, this.settings);
                 await collection.init();
                 this.collections.set(collectionName, collection);
                 return collection;
@@ -886,6 +1018,14 @@ class Database {
     }
 
     async close() {
+
+        // Close collections
+        const collections = this.collectionsArray;
+
+        for (const collection of collections) {
+            collection.close();
+        }
+
         if (this.db) {
             this.db.close();
             this.db = null;
@@ -951,6 +1091,9 @@ class Database {
 
     get settings() {
         return this._settings;
+    }
+    get settingsData() {
+        return this.settings.data;
     }
 }
 
@@ -1138,89 +1281,26 @@ class Settings {
     constructor(dbName, newSettings = {}) {
         this._dbName = dbName;
         this._settingsKey = `lacertadb_${this._dbName}_settings`;
-        this._settings = this._loadSettings();
+        this._data = this._loadSettings();
         this._mergeSettings(newSettings);
     }
 
-    _loadSettings() {
-        const settings = LocalStorageUtility.getItem(this.settingsKey);
-        return settings ? settings : {};
-    }
-
-    _saveSettings() {
-        LocalStorageUtility.setItem(this.settingsKey, this.settings);
-    }
-
-    _mergeSettings(newSettings) {
-        this.settings = { ...this.settings, ...newSettings };
-        this._saveSettings();
-    }
-
-    get(key) {
-        return this.settings[key];
-    }
-
-    set(key, value) {
-        this.settings[key] = value;
-        this._saveSettings();
-    }
-
-    remove(key) {
-        delete this.settings[key];
-        this._saveSettings();
-    }
-
-    clear() {
-        this.settings = {};
-        this._saveSettings();
-    }
-
-    // Accessor methods for private properties (if needed)
-    get dbName() {
-        return this._dbName;
-    }
-
-    get settings() {
-        return this._settings;
-    }
-
-    set settings(s) {
-        this._settings = s;
-    }
-
-    get settingsKey() {
-        return this._settings;
-    }
-}
-
-class Collection {
-    constructor(database, collectionName, settings = {}) {
-        this._database = database; // Reference to the parent Database instance
-        this._collectionName = collectionName;
-        this._settings = settings;
-        this._metadata = null;
-        this._lastFreeSpaceTime = 0;
-    }
-
-    async init() {
+    init() {
 
         // Set defaults for size and buffer limits
-        this.settings.sizeLimitKB = this.settings.sizeLimitKB || Infinity;
-        this.settings.bufferLimitKB = this.settings.bufferLimitKB || (this.settings.sizeLimitKB * 0.2);
+        this.set('sizeLimitKB', this.get('sizeLimitKB') || Infinity);
+        this.set('bufferLimitKB', this.get('bufferLimitKB') || -(this.get('sizeLimitKB') * 0.2));
 
         // Validate bufferLimitKB
-        if (this.settings.bufferLimitKB < -0.8 * this.settings.sizeLimitKB) {
+        if (this.get('bufferLimitKB') < -0.8 * this.get('sizeLimitKB')) {
             throw new Error("Buffer limit cannot be below -80% of the size limit.");
         }
 
         // Set up free space settings with default validation
-        this.settings.freeSpaceEvery = this._validateFreeSpaceSetting(this.settings.freeSpaceEvery);
-
-        // Load collection metadata from database metadata
-        this.metadata = this.database.metadata.getCollectionMetadata(this.name);
+        this.set('freeSpaceEvery', this._validateFreeSpaceSetting(this.get('freeSpaceEvery')));
     }
 
-    _validateFreeSpaceSetting(value) {
+    _validateFreeSpaceSetting(value = 10000) {
         if (value === undefined || value === false || value === 0) {
             return Infinity;
         }
@@ -1233,17 +1313,126 @@ class Collection {
         return value;
     }
 
+
+    _loadSettings() {
+        const settings = LocalStorageUtility.getItem(this.settingsKey);
+        return settings ? settings : {};
+    }
+
+    _saveSettings() {
+        LocalStorageUtility.setItem(this.settingsKey, this.data);
+    }
+
+    _mergeSettings(newSettings) {
+        this.data = Object.assign(this.data, newSettings);
+        this._saveSettings();
+    }
+
+    get(key) {
+        return this.data[key];
+    }
+
+    set(key, value) {
+        this.data[key] = value;
+        this._saveSettings();
+    }
+
+    remove(key) {
+        delete this.data[key];
+        this._saveSettings();
+    }
+
+    clear() {
+        this.data = {};
+        this._saveSettings();
+    }
+
+    // Accessor methods for private properties (if needed)
+    get dbName() {
+        return this._dbName;
+    }
+
+    get data() {
+        return this._data;
+    }
+
+    set data(s) {
+        this._data = s;
+    }
+
+    get settingsKey() {
+        return this._settingsKey;
+    }
+}
+
+class Collection {
+    constructor(database, collectionName, settings) {
+        this._database = database; // Reference to the parent Database instance
+        this._collectionName = collectionName;
+        this._settings = settings;
+        this._metadata = null;
+        this._lastFreeSpaceTime = 0;
+    }
+
+    async init() {
+
+        // Load collection metadata from database metadata
+        this.metadata = this.database.metadata.getCollectionMetadata(this.name);
+
+        // Run free space every period
+        this._freeSpaceInterval = setInterval(() => this._maybeFreeSpace.bind(this), this.settingsData.freeSpaceEvery);
+    }
+
+    async close() {
+        clearInterval(this._freeSpaceInterval);
+    }
+
     // Accessor methods for private properties
     get name() {
         return this._collectionName;
     }
 
+    get sizes() {
+        return this.metadataData.documentSizes || {};
+    }
+
+    get modifications() {
+        return this.metadataData.documentModifiedAt || {};
+    }
+
+    get permanents() {
+        return this.metadataData.documentPermanent || {};
+    }
+
     get keys() {
-        return Object.keys(this.metadata.documentSizes || {});
+        return Object.keys(this.sizes);
+    }
+
+    get documentsMetadata() {
+        var keys = this.keys;
+        var sizes = this.sizes;
+        var modifications = this.modifications;
+        var permanents = this.permanents;
+        var metadata = new Array(keys.length);
+        var i = 0;
+        for(const key of keys){
+            metadata[i++] = {
+                id: key,
+                size: sizes[key],
+                modified: modifications[key],
+                permanent: permanents[key],
+            };
+        }
+
+        return metadata;
     }
 
     get settings() {
         return this._settings;
+    }
+
+    get settingsData() {
+        return this.settings.data;
     }
 
     set settings(d) {
@@ -1266,16 +1455,20 @@ class Collection {
         return this._metadata;
     }
 
+    get metadataData() {
+        return this._metadata.getRawMetadata();
+    }
+
     set metadata(m) {
         this._metadata = m;
     }
 
     get sizeKB() {
-        return this.metadata.sizeKB;
+        return this.metadataData.sizeKB;
     }
 
     get length() {
-        return this.metadata.length;
+        return this.metadataData.length;
     }
 
     get totalSizeKB() {
@@ -1287,7 +1480,7 @@ class Collection {
     }
 
     get modifiedAt() {
-        return this.metadata.modifiedAt;
+        return this.metadataData.modifiedAt;
     }
 
     get isFreeSpaceEnabled() {
@@ -1295,16 +1488,16 @@ class Collection {
     }
 
     get shouldRunFreeSpaceSize() {
-        return this.totalSizeKB > this.settings.sizeLimitKB + this.settings.bufferLimitKB;
+        return (this.totalSizeKB > this.settingsData.sizeLimitKB + this.settings.bufferLimitKB);
     }
 
     get shouldRunFreeSpaceTime() {
-        return this.isFreeSpaceEnabled && (Date.now() - this.lastFreeSpaceTime >= this.settings.freeSpaceEvery)
+        return (this.isFreeSpaceEnabled && (Date.now() - this.lastFreeSpaceTime >= this.settings.freeSpaceEvery))
     }
 
     async _maybeFreeSpace() {
         if(this.shouldRunFreeSpaceSize || this.shouldRunFreeSpaceTime){
-            return this.freeSpace(this.settings.sizeLimitKB);
+            return this.freeSpace(this.settingsData.sizeLimitKB);
         }
     }
 
@@ -1313,7 +1506,7 @@ class Collection {
         const docData = await document.databaseOutput();
         const docId = docData._id;
         const isPermanent = docData._permanent || false;
-        let isNewDocument = !(docId in this.metadata.documentSizes);
+        let isNewDocument = !(docId in this.metadataData.documentSizes);
 
         try {
             if (isNewDocument) {
@@ -1349,10 +1542,10 @@ class Collection {
         await this._maybeFreeSpace();
         return isNewDocument;
     }
-    
+
     async getDocument(docId, encryptionKey = null) {
         // Check if the document exists in metadata
-        if (!(docId in this.metadata.data.documentSizes)) {
+        if (!(docId in this.metadataData.documentSizes)) {
             return false;
         }
 
@@ -1382,7 +1575,7 @@ class Collection {
     async getDocuments(ids, encryptionKey = null) {
         const results = [];
         // Filter IDs to those that exist in metadata
-        const existingIds = ids.filter(id => id in this.metadata.data.documentSizes);
+        const existingIds = ids.filter(id => id in this.metadataData.documentSizes);
 
         if (existingIds.length === 0) {
             return results; // Return empty array if no documents exist
@@ -1418,12 +1611,12 @@ class Collection {
     }
 
     async deleteDocument(docId, force = false) {
-        const isPermanent = this.metadata.data.documentPermanent[docId] || false;
+        const isPermanent = this.metadataData.documentPermanent[docId] || false;
         if (isPermanent && !force) {
             return false;
         }
 
-        const docExists = docId in this.metadata.data.documentSizes;
+        const docExists = docId in this.metadataData.documentSizes;
 
         if (!docExists) {
             return false;
@@ -1445,8 +1638,8 @@ class Collection {
     async deleteDocuments(docIds, force = false) {
         // Filter out IDs that don't exist or are _permanent (if force is false)
         const existingDocIds = docIds.filter(docId => {
-            const exists = docId in this.metadata.data.documentSizes;
-            const isPermanent = this.metadata.data.documentPermanent[docId] || false;
+            const exists = docId in this.metadataData.documentSizes;
+            const isPermanent = this.metadataData.documentPermanent[docId] || false;
             return exists && (force || !isPermanent);
         });
 
@@ -1478,7 +1671,7 @@ class Collection {
         this.lastFreeSpaceTime = Date.now();
         if (size >= 0) {
             // Positive size indicates maximum total size to keep
-            const currentSize = this.metadata.sizeKB;
+            const currentSize = this.sizeKB;
             if (currentSize <= size) {
                 // No need to free space
                 return 0;
@@ -1488,29 +1681,28 @@ class Collection {
         } else {
             // Negative size indicates the amount of space in KB to free
             spaceToFree = -size;
+            size = currentSize - spaceToFree;
         }
 
         // Sort documents by modified time (oldest first), excluding _permanent documents
-        const docEntries = Object.entries(this.metadata.data.documentModifiedAt)
-            .filter(([docId]) => !this.metadata.data.documentPermanent[docId])
+        const docEntries = Object.entries(this.metadataData.documentModifiedAt)
+            .filter(([docId]) => !this.metadataData.documentPermanent[docId])
             .sort((a, b) => a[1] - b[1]); // Ascending order of modified timestamp
 
         let totalFreed = 0;
-        const docsToDelete = [];
 
         for (const [docId] of docEntries) {
-            const docSize = this.metadata.data.documentSizes[docId];
-            totalFreed += docSize;
-            docsToDelete.push(docId);
-            if (totalFreed >= spaceToFree) {
-                break;
+            if(this.sizeKB > size){
+                const docSize = this.metadataData.documentSizes[docId];
+                totalFreed += docSize;
+                await this.deleteDocument(docId, true);
+                if (totalFreed >= spaceToFree) {
+                    break;
+                }
             }
         }
 
-        // Delete the documents using batch deletion
-        const freedSpace = await this.deleteDocuments(docsToDelete);
-
-        return freedSpace;
+        return totalFreed;
     }
 
     async query(filter = {}, encryptionKey = null) {
