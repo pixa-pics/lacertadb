@@ -20,6 +20,108 @@ SOFTWARE.
 "use strict";
 import JOYSON from "joyson";
 
+class OPFSUtility {
+    /**
+     * Save attachments to the file system.
+     * @param {string} dbName - The database name.
+     * @param {string} collectionName - The collection name.
+     * @param {string} documentId - The ID of the document.
+     * @param {Array} attachments - Array of attachment objects with `data` property (Blob or File).
+     * @returns {Promise<Array>} - Array of file paths where attachments are stored.
+     */
+    static async saveAttachments(dbName, collectionName, documentId, attachments) {
+        const attachmentPaths = [];
+
+        // Ensure OPFS is available
+        const rootHandle = await navigator.storage.getDirectory();
+
+        // Build the directory path
+        const pathParts = [dbName, collectionName, documentId];
+
+        // Navigate to the document directory
+        let dirHandle = rootHandle;
+        for (const part of pathParts) {
+            dirHandle = await dirHandle.getDirectoryHandle(part, { create: true });
+        }
+
+        // Save each attachment
+        for (let i = 0; i < attachments.length; i++) {
+            const fileId = i.toString(); // Use index as file ID
+            const fileHandle = await dirHandle.getFileHandle(fileId, { create: true });
+            const writable = await fileHandle.createWritable();
+            await writable.write(attachments[i].data);
+            await writable.close();
+
+            // Store the path
+            const filePath = `${dbName}/${collectionName}/${documentId}/${fileId}`;
+            attachmentPaths.push(filePath);
+        }
+
+        return attachmentPaths;
+    }
+
+    /**
+     * Retrieve attachments from the file system.
+     * @param {Array} attachmentPaths - Array of file paths to retrieve attachments from.
+     * @returns {Promise<Array>} - Array of attachment objects with `data` property (Blob).
+     */
+    static async getAttachments(attachmentPaths) {
+        const attachments = [];
+
+        // Ensure OPFS is available
+        const rootHandle = await navigator.storage.getDirectory();
+
+        for (const path of attachmentPaths) {
+            try {
+                // Split the path to navigate
+                const pathParts = path.split('/');
+                let dirHandle = rootHandle;
+                for (let i = 0; i < pathParts.length - 1; i++) {
+                    dirHandle = await dirHandle.getDirectoryHandle(pathParts[i]);
+                }
+                const fileHandle = await dirHandle.getFileHandle(pathParts[pathParts.length - 1]);
+                const file = await fileHandle.getFile();
+
+                attachments.push({
+                    path: path,
+                    data: file,
+                });
+            } catch (error) {
+                console.error(`Error retrieving attachment at "${path}": ${error.message}`);
+            }
+        }
+
+        return attachments;
+    }
+
+    /**
+     * Delete attachments from the file system.
+     * @param {string} dbName - The database name.
+     * @param {string} collectionName - The collection name.
+     * @param {string} documentId - The ID of the document.
+     * @returns {Promise<void>}
+     */
+    static async deleteAttachments(dbName, collectionName, documentId) {
+        // Ensure OPFS is available
+        const rootHandle = await navigator.storage.getDirectory();
+
+        // Build the directory path
+        const pathParts = [dbName, collectionName, documentId];
+
+        // Navigate to the parent directory
+        let dirHandle = rootHandle;
+        for (let i = 0; i < pathParts.length - 1; i++) {
+            dirHandle = await dirHandle.getDirectoryHandle(pathParts[i]);
+        }
+
+        try {
+            await dirHandle.removeEntry(pathParts[pathParts.length - 1], { recursive: true });
+        } catch (error) {
+            console.error(`Error deleting attachments for document "${documentId}": ${error.message}`);
+        }
+    }
+}
+
 class BrowserCompressionUtility {
     /**
      * Compress a string or Uint8Array using Gzip.
@@ -646,6 +748,7 @@ class CollectionMetadata {
                 documentSizes: {},     // Stores document sizes in KB
                 documentModifiedAt: {},  // Stores document modification timestamps
                 documentPermanent: {}, // Stores document permanent flags
+                documentAttachments: {}, // Stores document attachments
             };
             // Update databaseMetadata
             this._databaseMetadata.data.collections[collectionName] = this._metadata;
@@ -705,17 +808,21 @@ class CollectionMetadata {
     set databaseMetadata(m) {
         this._databaseMetadata = m;
     }
+
     // Methods to add, update, delete documents
     get documentSizes(){return this.metadata.documentSizes;}
     get documentModifiedAt(){return this.metadata.documentModifiedAt;}
-    get documentPermanent(){return this.metadata.documentSizes;}
+    get documentPermanent(){return this.metadata.documentPermanent;}
+    get documentAttachments(){return this.metadata.documentAttachments;}
 
     set documentSizes(v){ this.metadata.documentSizes = v;}
     set documentModifiedAt(v){ this.metadata.documentModifiedAt = v;}
-    set documentPermanent(v){ this.metadata.documentSizes = v;}
+    set documentPermanent(v){ this.metadata.documentPermanent = v;}
+    set documentAttachments(v){ this.metadata.documentAttachments = v;}
+
     // Add or update a document
-    updateDocument(docId, docSizeKB, isPermanent = false) {
-        const isNewDocument = this.keys.indexOf(docId) === -1;
+    updateDocument(docId, docSizeKB, isPermanent = false, attachmentCount = 0) {
+        const isNewDocument = !this.keys.includes(docId);
         const previousDocSizeKB = this.documentSizes[docId] || 0;
         const sizeKBChange = docSizeKB - previousDocSizeKB;
         const lengthChange = isNewDocument ? 1 : 0;
@@ -723,7 +830,8 @@ class CollectionMetadata {
         // Update document metadata
         this.documentSizes[docId] = docSizeKB;
         this.documentModifiedAt[docId] = Date.now();
-        this.documentPermanent[docId] = isPermanent ? 1: 0;
+        this.documentPermanent[docId] = isPermanent ? 1 : 0;
+        this.documentAttachments[docId] = attachmentCount; // Number of attachments
 
         // Update collection metadata
         this.metadata.sizeKB += sizeKBChange;
@@ -736,7 +844,7 @@ class CollectionMetadata {
 
     // Delete a document
     deleteDocument(docId) {
-        if (this.keys.indexOf(docId) === -1) {
+        if (!this.keys.includes(docId)) {
             return false;
         }
 
@@ -748,6 +856,7 @@ class CollectionMetadata {
         delete this.documentSizes[docId];
         delete this.documentModifiedAt[docId];
         delete this.documentPermanent[docId];
+        delete this.documentAttachments[docId];
 
         // Update collection metadata
         this.metadata.sizeKB += sizeKBChange;
@@ -789,8 +898,8 @@ class CollectionMetadata {
 class QuickStore {
     constructor(dbName) {
         this._dbName = dbName;
-        this._metadataKey = `lacertadb_${this._dbName}_fastdocs`;
-        this._documentKeyPrefix = 'lacertadb_fastdoc_';
+        this._metadataKey = `lacertadb_${this._dbName}_quickstore_`;
+        this._documentKeyPrefix = 'lacertadb_quickstore_';
         this._metadata = this._loadMetadata();
     }
 
@@ -911,8 +1020,8 @@ class QuickStore {
 class Database {
     constructor(dbName, settings = {}) {
         this._dbName = dbName;
-        this._db = null; // IDBDatabase instance
-        this._collections = new Map(); // collectionName -> Collection instance
+        this._db = null;
+        this._collections = new Map();
         this._metadata = new DatabaseMetadata(dbName);
         this._settings = new Settings(dbName, settings);
         this._quickStore = new QuickStore(this._dbName);
@@ -922,6 +1031,7 @@ class Database {
     get quickStore() {
         return this._quickStore;
     }
+
     async init() {
         // Open the database
         this.db = await IndexedDBUtility.openDatabase(this.name, undefined, (db, oldVersion, newVersion) => {
@@ -1101,9 +1211,12 @@ class Document {
     constructor(data, encryptionKey = null) {
         this._id = data._id || this._generateId();
         this._created = data._created || Date.now();
-        this._permanent = data._permanent ? true: false;
+        this._permanent = data._permanent ? true : false;
         this._encrypted = data._encrypted || (encryptionKey ? true : false);
         this._compressed = data._compressed || false;
+
+        // _attachments is an array of file paths
+        this._attachments = data.attachments || []; // Array of file paths
 
         if (data.packedData) {
             this._packedData = data.packedData;
@@ -1116,6 +1229,15 @@ class Document {
         }
 
         this._encryptionKey = encryptionKey || "";
+    }
+
+
+    get attachments() {
+        return this._attachments;
+    }
+
+    set attachments(value) {
+        this._attachments = value;
     }
 
     get data() {
@@ -1140,6 +1262,32 @@ class Document {
 
     set encryptionKey(d) {
         this._encryptionKey = d;
+    }
+
+    /**
+     * Check if a document contains attachments.
+     * @param {object} documentData - The document data to check.
+     * @returns {boolean} - True if the document contains attachments, false otherwise.
+     */
+    static hasAttachments(documentData) {
+        return documentData.attachments && documentData.attachments.length > 0;
+    }
+
+    /**
+     * Retrieve attachments for a given document.
+     * @param {object} documentData - The document data.
+     * @param {string} dbName - The database name.
+     * @param {string} collectionName - The collection name.
+     * @returns {Promise<Array>} - Array of attachment objects with `data` property (Blob).
+     */
+    static async getAttachments(documentData, dbName, collectionName) {
+        if (!Document.hasAttachments(documentData)) {
+            return [];
+        }
+
+        const attachmentPaths = documentData.attachments;
+        documentData.attachments = await OPFSUtility.getAttachments(attachmentPaths);
+        return Promise.resolve(documentData);
     }
 
     /**
@@ -1172,6 +1320,7 @@ class Document {
             _encrypted: true,
             _compressed: documentData._compressed,
             _permanent: documentData._permanent ? true: false,
+            attachments: documentData.attachments,
             data: unpackedData
         };
     }
@@ -1240,21 +1389,37 @@ class Document {
 
     /**
      * Return the document in a format for general object use (readable format).
+     * @param {boolean} includeAttachments - Whether to include attachment data.
+     * @param {AttachmentManager} attachmentManager - The attachment manager instance.
      * @returns {Promise<object>} - Unpacked document data.
      */
-    async objectOutput() {
+    /**
+     * Return the document in a format for general object use (readable format).
+     * @param {boolean} includeAttachments - Whether to include attachment data.
+     * @returns {Promise<object>} - Unpacked document data.
+     */
+    async objectOutput(includeAttachments = false) {
         if (!this.data) {
-            await this.unpack();  // Ensure data is unpacked before returning
+            await this.unpack(); // Ensure data is unpacked before returning
         }
-        return {
+
+        const output = {
             _id: this._id,
             _created: this._created,
             _modified: this._modified,
-            _permanent: this._permanent ? true: false,
+            _permanent: this._permanent,
             _encrypted: this._encrypted,
             _compressed: this._compressed,
-            data: this.data
+            attachments: this.attachments,
+            data: this.data,
         };
+
+        if (includeAttachments && this.attachments.length > 0) {
+            const attachments = await OPFSUtility.getAttachments(this.attachments);
+            output.attachments = attachments;
+        }
+
+        return output;
     }
 
     /**
@@ -1263,16 +1428,18 @@ class Document {
      */
     async databaseOutput() {
         if (!this.packedData || this.packedData.length === 0) {
-            await this.pack();  // Ensure the data is packed before returning
+            await this.pack(); // Ensure the data is packed before returning
         }
+
         return {
             _id: this._id,
             _created: this._created,
-            _modified: this._modified,  // Keep original _modified if packedData was used
-            _permanent: this._permanent ? true: false,
+            _modified: this._modified,
+            _permanent: this._permanent ? true : false,
             _compressed: this._compressed,
             _encrypted: this._encrypted,
-            packedData: this.packedData  // Packed and ready for storage
+            attachments: this.attachments,
+            packedData: this.packedData, // Packed and ready for storage
         };
     }
 }
@@ -1367,11 +1534,16 @@ class Settings {
 
 class Collection {
     constructor(database, collectionName, settings) {
-        this._database = database; // Reference to the parent Database instance
+        this._database = database;
         this._collectionName = collectionName;
         this._settings = settings;
         this._metadata = null;
         this._lastFreeSpaceTime = 0;
+        this._observer = new Observer();
+    }
+
+    get observer() {
+        return this._observer;
     }
 
     async init() {
@@ -1400,6 +1572,10 @@ class Collection {
         return this.metadataData.documentModifiedAt || {};
     }
 
+    get attachments() {
+        return this.metadataData.attachments || {};
+    }
+
     get permanents() {
         return this.metadataData.documentPermanent || {};
     }
@@ -1413,6 +1589,7 @@ class Collection {
         var sizes = this.sizes;
         var modifications = this.modifications;
         var permanents = this.permanents;
+        var attachments = this.attachments;
         var metadata = new Array(keys.length);
         var i = 0;
         for(const key of keys){
@@ -1421,6 +1598,7 @@ class Collection {
                 size: sizes[key],
                 modified: modifications[key],
                 permanent: permanents[key],
+                attachment: attachments[key]
             };
         }
 
@@ -1497,13 +1675,35 @@ class Collection {
 
     async _maybeFreeSpace() {
         if(this.shouldRunFreeSpaceSize || this.shouldRunFreeSpaceTime){
-            return this.freeSpace(this.settingsData.sizeLimitKB);
+            return this.freeSpace(this.settings.sizeLimitKB);
         }
     }
 
+    /**
+     * Add a single document to the collection.
+     * @param {object} documentData - The document data to add.
+     * @param {string|null} encryptionKey - Encryption key if needed.
+     * @returns {Promise<boolean>} - True if the document was newly added, false if updated.
+     */
     async addDocument(documentData, encryptionKey = null) {
+        // Emit beforeAdd event
+        this.observer._emit('beforeAdd', documentData);
+
         const document = new Document(documentData, encryptionKey);
+
+        // Save attachments if any
+        if (documentData._attachments && documentData._attachments.length > 0) {
+            const attachmentPaths = await OPFSUtility.saveAttachments(
+                this.database.name,
+                this.name,
+                document._id,
+                documentData._attachments
+            );
+            document._attachments = attachmentPaths;
+        }
+
         const docData = await document.databaseOutput();
+
         const docId = docData._id;
         const isPermanent = docData._permanent || false;
         let isNewDocument = !(docId in this.metadataData.documentSizes);
@@ -1511,21 +1711,36 @@ class Collection {
         try {
             if (isNewDocument) {
                 // Use insert (add), will fail if record exists
-                await IndexedDBUtility.performTransaction(this.database.db, this.name, 'readwrite', (store) => {
-                    return IndexedDBUtility.add(store, docData);
-                });
+                await IndexedDBUtility.performTransaction(
+                    this.database.db,
+                    this.name,
+                    'readwrite',
+                    (store) => {
+                        return IndexedDBUtility.add(store, docData);
+                    }
+                );
             } else {
                 // Use put (update) for existing documents
-                await IndexedDBUtility.performTransaction(this.database.db, this.name, 'readwrite', (store) => {
-                    return IndexedDBUtility.put(store, docData);
-                });
+                await IndexedDBUtility.performTransaction(
+                    this.database.db,
+                    this.name,
+                    'readwrite',
+                    (store) => {
+                        return IndexedDBUtility.put(store, docData);
+                    }
+                );
             }
         } catch (error) {
             if (isNewDocument) {
                 // Record already exists, so we update it
-                await IndexedDBUtility.performTransaction(this.database.db, this.name, 'readwrite', (store) => {
-                    return IndexedDBUtility.put(store, docData);
-                });
+                await IndexedDBUtility.performTransaction(
+                    this.database.db,
+                    this.name,
+                    'readwrite',
+                    (store) => {
+                        return IndexedDBUtility.put(store, docData);
+                    }
+                );
                 isNewDocument = false;
             } else {
                 throw error;
@@ -1535,23 +1750,65 @@ class Collection {
         const docSizeKB = docData.packedData.byteLength / 1024;
 
         // Update collection metadata
-        this.metadata.updateDocument(docId, docSizeKB, isPermanent);
+        this.metadata.updateDocument(
+            docId,
+            docSizeKB,
+            isPermanent,
+            documentData._attachments ? documentData._attachments.length : 0
+        );
 
         // Save metadata
         this.database.metadata.saveMetadata();
         await this._maybeFreeSpace();
+
+        // Emit afterAdd event
+        this.observer._emit('afterAdd', documentData);
+
         return isNewDocument;
     }
 
-    async getDocument(docId, encryptionKey = null) {
+    /**
+     * Add multiple documents to the collection.
+     * @param {object[]} documentsData - Array of document data to add.
+     * @param {string|null} encryptionKey - Encryption key if needed.
+     * @returns {Promise<number>} - Number of documents newly added.
+     */
+    async addDocuments(documentsData, encryptionKey = null) {
+        let newDocumentsCount = 0;
+
+        for (const documentData of documentsData) {
+            const isNewDocument = await this.addDocument(documentData, encryptionKey);
+            if (isNewDocument) {
+                newDocumentsCount += 1;
+            }
+        }
+
+        return newDocumentsCount;
+    }
+
+    /**
+     * Retrieve a single document from the collection.
+     * @param {string} docId - The ID of the document to retrieve.
+     * @param {string|null} encryptionKey - Encryption key if needed.
+     * @returns {Promise<object|false>} - The document object or false if not found.
+     */
+    async getDocument(docId, encryptionKey = null, includeAttachments = false) {
+        // Emit beforeGet event
+        this.observer._emit('beforeGet', docId);
+
         // Check if the document exists in metadata
         if (!(docId in this.metadataData.documentSizes)) {
             return false;
         }
 
-        const docData = await IndexedDBUtility.performTransaction(this.database.db, this.name, 'readonly', (store) => {
-            return IndexedDBUtility.get(store, docId);
-        });
+        const docData = await IndexedDBUtility.performTransaction(
+            this.database.db,
+            this.name,
+            'readonly',
+            (store) => {
+                return IndexedDBUtility.get(store, docId);
+            }
+        );
 
         if (docData) {
             let document;
@@ -1565,14 +1822,27 @@ class Collection {
             } else {
                 document = new Document(docData);
             }
-            return await document.objectOutput();
+
+            const output = await document.objectOutput(includeAttachments);
+
+            // Emit afterGet event
+            this.observer._emit('afterGet', output);
+
+            return output;
         } else {
             // Should not happen since metadata indicates the document exists
             return false;
         }
     }
 
-    async getDocuments(ids, encryptionKey = null) {
+    /**
+     * Retrieve multiple documents from the collection.
+     * @param {string[]} ids - Array of document IDs to retrieve.
+     * @param {string|null} encryptionKey - Encryption key if needed.
+     * @param {boolean} withAttachments - Whether to include attachment data.
+     * @returns {Promise<object[]>} - Array of document objects.
+     */
+    async getDocuments(ids, encryptionKey = null, withAttachments = false) {
         const results = [];
         // Filter IDs to those that exist in metadata
         const existingIds = ids.filter(id => id in this.metadataData.documentSizes);
@@ -1581,50 +1851,71 @@ class Collection {
             return results; // Return empty array if no documents exist
         }
 
-        const getPromises = await IndexedDBUtility.performTransaction(this.database.db, this.name, 'readonly', async (store) => {
-            return existingIds.map(id => {
-                return IndexedDBUtility.get(store, id);
-            });
-        });
+        // Retrieve documents
+        await IndexedDBUtility.performTransaction(
+            this.database.db,
+            this.name,
+            'readonly',
+            async (store) => {
+                const getPromises = existingIds.map(id => IndexedDBUtility.get(store, id));
+                const docsData = await Promise.all(getPromises);
 
-        const docsData = await Promise.all(getPromises);
+                for (const docData of docsData) {
+                    if (docData) {
+                        let document;
+                        if (Document.isEncrypted(docData)) {
+                            if (encryptionKey) {
+                                document = new Document(docData, encryptionKey);
+                            } else {
+                                // Skip encrypted documents if no key is provided
+                                continue;
+                            }
+                        } else {
+                            document = new Document(docData);
+                        }
 
-        for (const docData of docsData) {
-            if (docData) {
-                let document;
-                if (Document.isEncrypted(docData)) {
-                    if (encryptionKey) {
-                        document = new Document(docData, encryptionKey);
-                    } else {
-                        // Skip encrypted documents if no key is provided
-                        continue;
+                        const output = await document.objectOutput(withAttachments);
+                        results.push(output);
                     }
-                } else {
-                    document = new Document(docData);
                 }
-                const object = await document.objectOutput();
-                results.push(object);
             }
-        }
+        );
 
         return results;
     }
 
+    /**
+     * Delete a single document from the collection.
+     * @param {string} docId - The ID of the document to delete.
+     * @param {boolean} force - If true, will delete even if the document is marked as permanent.
+     * @returns {Promise<boolean>} - True if the document was deleted, false otherwise.
+     */
     async deleteDocument(docId, force = false) {
-        const isPermanent = this.metadataData.documentPermanent[docId] || false;
+        const isPermanent = this.permanents[docId] || false;
         if (isPermanent && !force) {
             return false;
         }
 
-        const docExists = docId in this.metadataData.documentSizes;
+        const docExists = docId in this.sizes;
 
         if (!docExists) {
             return false;
         }
 
-        await IndexedDBUtility.performTransaction(this.database.db, this.name, 'readwrite', (store) => {
-            return IndexedDBUtility.delete(store, docId);
-        });
+        // Delete attachments if they exist
+        const attachmentCount = this.metadata.documentAttachments[docId] || 0;
+        if (attachmentCount > 0) {
+            await OPFSUtility.deleteAttachments(docId);
+        }
+
+        await IndexedDBUtility.performTransaction(
+            this.database.db,
+            this.name,
+            'readwrite',
+            (store) => {
+                return IndexedDBUtility.delete(store, docId);
+            }
+        );
 
         // Update metadata
         this.metadata.deleteDocument(docId);
@@ -1635,8 +1926,14 @@ class Collection {
         return true;
     }
 
+    /**
+     * Delete multiple documents from the collection.
+     * @param {string[]} docIds - Array of document IDs to delete.
+     * @param {boolean} force - If true, will delete even if documents are marked as permanent.
+     * @returns {Promise<number>} - Total space freed in KB.
+     */
     async deleteDocuments(docIds, force = false) {
-        // Filter out IDs that don't exist or are _permanent (if force is false)
+        // Filter out IDs that don't exist or are permanent (if force is false)
         const existingDocIds = docIds.filter(docId => {
             const exists = docId in this.metadataData.documentSizes;
             const isPermanent = this.metadataData.documentPermanent[docId] || false;
@@ -1647,15 +1944,31 @@ class Collection {
             return 0; // No documents to delete
         }
 
+        // Delete attachments for each document
+        for (const docId of existingDocIds) {
+            const attachmentCount = this.metadata.documentAttachments[docId] || 0;
+            if (attachmentCount > 0) {
+                await OPFSUtility.deleteAttachments(docId);
+            }
+        }
+
         // Get total space to free
-        const totalSpaceToFree = existingDocIds.reduce((acc, docId) => acc + this.metadata._metadata.documentSizes[docId], 0);
+        const totalSpaceToFree = existingDocIds.reduce(
+            (acc, docId) => acc + this.metadataData.documentSizes[docId],
+            0
+        );
 
         // Perform deletion in a single transaction
-        await IndexedDBUtility.performTransaction(this.database.db, this.name, 'readwrite', async (store) => {
-            for (const docId of existingDocIds) {
-                store.delete(docId);
+        await IndexedDBUtility.performTransaction(
+            this.database.db,
+            this.name,
+            'readwrite',
+            async (store) => {
+                for (const docId of existingDocIds) {
+                    store.delete(docId);
+                }
             }
-        });
+        );
 
         // Update metadata
         this.metadata.deleteDocuments(existingDocIds);
@@ -1668,10 +1981,11 @@ class Collection {
 
     async freeSpace(size) {
         let spaceToFree;
-        this.lastFreeSpaceTime = Date.now();
+        this.lastFreeSpaceTime = Date.now(); $
+        const currentSize = this.sizeKB;
+
         if (size >= 0) {
             // Positive size indicates maximum total size to keep
-            const currentSize = this.sizeKB;
             if (currentSize <= size) {
                 // No need to free space
                 return 0;
@@ -1735,6 +2049,45 @@ class Collection {
             });
         });
         return results;
+    }
+}
+
+class Observer {
+    constructor() {
+        this._listeners = {
+            'beforeAdd': [],
+            'afterAdd': [],
+            'beforeDelete': [],
+            'afterDelete': [],
+            'beforeGet': [],
+            'afterGet': [],
+            // Add more events as needed
+        };
+    }
+
+    on(event, callback) {
+        if (this._listeners[event]) {
+            this._listeners[event].push(callback);
+        } else {
+            throw new Error(`Event "${event}" is not supported.`);
+        }
+    }
+
+    off(event, callback) {
+        if (this._listeners[event]) {
+            const index = this._listeners[event].indexOf(callback);
+            if (index > -1) {
+                this._listeners[event].splice(index, 1);
+            }
+        }
+    }
+
+    _emit(event, ...args) {
+        if (this._listeners[event]) {
+            for (const callback of this._listeners[event]) {
+                callback(...args);
+            }
+        }
     }
 }
 

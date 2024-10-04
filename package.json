@@ -1,6 +1,6 @@
 {
   "name": "lacertadb",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "description": "LacertaDB! The Easy JS DB. IndexedDB for data and LocalStorage for metadata and top document.",
   "devDependencies": {
     "path": "~0.12.7",

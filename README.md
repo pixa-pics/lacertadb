@@ -1,4 +1,4 @@
-# LacertaDB (Version: 0.5.0)
+# LacertaDB (Version: 0.7.0)
 
 **LacertaDB** - Secure, compressed, client-side storage made simple. (Works better above 0.5.0)
 
@@ -8,6 +8,7 @@ LacertaDB is a browser-based, high-performance database built on `IndexedDB` wit
 
 ## Key Features
 
+- **Observer**: Observe or listen to collection's operation with handlers.
 - **Quick Store Functionality**: When you open a progressive web application, you don't want to rely on indexedDB to load settings such as theme and locales, because it is slow. Instead you access those kind of data from localstorage which has no initialization needed.
 - **Automatic Metadata Tracking**: Metadata, including database size, number of documents, and modification times, are updated automatically, keeping your data organized.
 - **Compression & Encryption**: Compress data using the browser and encrypt it with it too for secure and efficient storage.
@@ -24,6 +25,354 @@ Install LacertaDB using npm:
 npm install lacertadb
 ```
 
+# 📚 Documentation
+
+Welcome to the comprehensive documentation for our Database System\! This guide will help you understand how to create a database, use the quick store, initialize the system, access observers, manage documents, and more.
+
+## Table of Contents
+
+1. [Introduction](#introduction)
+2. [Getting Started](#getting-started)
+   - [Creating a Database](#creating-a-database)
+   - [Initializing the System](#initializing-the-system)
+   - [Closing the Database](#closing-the-database)
+3. [Quick Store](#quick-store)
+   - [What is the Quick Store?](#what-is-the-quick-store)
+   - [Using the Quick Store](#using-the-quick-store)
+4. [Observer Pattern](#observer-pattern)
+   - [Accessing the Observer](#accessing-the-observer)
+   - [Using the Observer](#using-the-observer)
+5. [Document Structure](#document-structure)
+   - [Fields Explanation](#fields-explanation)
+   - [Attachments Handling](#attachments-handling)
+6. [Document Management](#document-management)
+   - [Adding Documents](#adding-documents)
+   - [Modifying Documents](#modifying-documents)
+   - [Deleting Documents](#deleting-documents)
+7. [Collection Management](#collection-management)
+   - [Creating a Collection](#creating-a-collection)
+   - [Deleting a Collection](#deleting-a-collection)
+   - [Accessing Collection Metadata](#accessing-collection-metadata)
+8. [Document Class Static Methods](#document-class-static-methods)
+   - [Verifying Encrypted Data](#verifying-encrypted-data)
+   - [Checking Attachments Retrieval](#checking-attachments-retrieval)
+9. [Conclusion](#conclusion)
+
+---
+
+## Introduction
+
+✨ Welcome to the LacertaDB System\! LacertaDB provides a robust and efficient way to manage your data with features like encryption, compression, and attachment handling. It supports asynchronous initialization, observers for event handling, and offers both quick storage and full database capabilities.
+
+---
+
+## Getting Started
+
+### Creating a Database
+
+To create a new database, instantiate the `Database` class:
+
+```javascript
+const dbName = 'myDatabase';
+const db = new Database(dbName);
+```
+
+### Initializing the System
+
+Before using the database, initialize it asynchronously:
+
+```javascript
+await db.init();
+```
+
+### Closing the Database
+
+When you're done with the database, ensure you close it to release resources:
+
+```javascript
+await db.close();
+```
+
+---
+
+## Quick Store
+
+### What is the Quick Store?
+
+⚡ **Quick Store** is a special store that can be accessed before asynchronous initialization. It allows you to store and retrieve documents quickly without waiting for the full database to initialize.
+
+### Using the Quick Store
+
+Access the quick store through the `quickStore` property of the `Database` instance:
+
+```javascript
+const quickStore = db.quickStore;
+```
+
+#### Adding a Document to Quick Store
+
+```javascript
+const documentData = { data: { /* your data */ } };
+await quickStore.setDocument(documentData);
+```
+
+#### Retrieving a Document from Quick Store
+
+```javascript
+const docId = 'yourDocumentId';
+const document = await quickStore.getDocument(docId);
+```
+
+---
+
+## Observer Pattern
+
+### Accessing the Observer
+
+👀 Each `Collection` instance has an `observer` that you can use to listen for events:
+
+```javascript
+const collection = await db.getCollection('myCollection');
+const observer = collection.observer;
+```
+
+### Using the Observer
+
+Subscribe to various events such as `beforeAdd`, `afterAdd`, `beforeDelete`, `afterDelete`, `beforeGet`, and `afterGet`:
+
+```javascript
+observer.on('beforeAdd', (documentData) => {
+    console.log('About to add:', documentData);
+});
+
+observer.on('afterAdd', (documentData) => {
+    console.log('Added:', documentData);
+});
+```
+
+---
+
+## Document Structure
+
+### Fields Explanation
+
+A `Document` in the database system has several fields:
+
+- **`_id`**: *(String)* Unique identifier for the document. If not provided, it is auto-generated.
+- **`_created`**: *(Number)* Timestamp of when the document was created.
+- **`_modified`**: *(Number)* Timestamp of when the document was last modified.
+- **`_permanent`**: *(Boolean)* Indicates if the document is permanent and should not be deleted during free space operations.
+- **`_encrypted`**: *(Boolean)* Set to `true` to encrypt the document data.
+- **`_compressed`**: *(Boolean)* Set to `true` to compress the document data.
+- **`data`**: *(Object)* The actual data content of the document.
+- **`attachments`**: *(Array)* An array of attachment file paths associated with the document.
+
+#### Example Document Data
+
+```javascript
+const documentData = {
+    _id: 'uniqueDocId',
+    _permanent: false,
+    _encrypted: true,
+    _compressed: true,
+    data: {
+        name: 'Sample Document',
+        content: 'This is a sample.'
+    },
+    attachments: [/* array of file paths or Blob objects */]
+};
+```
+
+### Attachments Handling
+
+📎 **Attachments** can be added to documents. They are stored separately in the file system and linked via file paths in the `attachments` field.
+
+#### Adding Attachments
+
+When adding attachments, include them in the `attachments` array:
+
+```javascript
+const documentData = {
+    data: { /* your data */ },
+    attachments: [fileBlob1, fileBlob2]
+};
+await collection.addDocument(documentData);
+```
+
+#### Retrieving Attachments
+
+To retrieve attachments along with the document:
+
+```javascript
+const document = await collection.getDocument(docId, encryptionKey, true);
+const attachments = document.attachments; // Contains Blob objects
+```
+
+---
+
+## Document Management
+
+### Adding Documents
+
+To add a document to a collection:
+
+```javascript
+const documentData = {
+    _encrypted: true, // Set to true to encrypt
+    _compressed: true, // Set to true to compress
+    data: { /* your data */ },
+    attachments: [/* optional attachments */]
+};
+await collection.addDocument(documentData, 'yourEncryptionKey');
+```
+
+### Modifying Documents
+
+To modify a document, add a document with the same `_id`. It will update the existing document:
+
+```javascript
+const updatedDocumentData = {
+    _id: 'existingDocId',
+    data: { /* updated data */ },
+    _modified: Date.now()
+};
+await collection.addDocument(updatedDocumentData);
+```
+
+### Deleting Documents
+
+To delete a document:
+
+```javascript
+const docId = 'documentId';
+const forceDelete = false; // Set to true to delete permanent documents
+await collection.deleteDocument(docId, forceDelete);
+```
+
+#### Deleting Multiple Documents
+
+```javascript
+const docIds = ['docId1', 'docId2'];
+await collection.deleteDocuments(docIds);
+```
+
+---
+
+## Collection Management
+
+### Creating a Collection
+
+To create a new collection:
+
+```javascript
+const collectionName = 'myNewCollection';
+const collection = await db.createCollection(collectionName);
+```
+
+### Deleting a Collection
+
+To delete an existing collection:
+
+```javascript
+const collectionName = 'collectionToDelete';
+await db.deleteCollection(collectionName);
+```
+
+### Accessing Collection Metadata
+
+You can access metadata about a collection, such as its size, document count, and modification time:
+
+```javascript
+const collection = await db.getCollection('myCollection');
+const metadata = collection.metadataData;
+
+console.log('Collection Size (KB):', metadata.sizeKB);
+console.log('Number of Documents:', metadata.length);
+console.log('Last Modified At:', new Date(metadata.modifiedAt));
+```
+
+#### Document Metadata
+
+To get metadata about individual documents:
+
+```javascript
+const documentsMetadata = collection.documentsMetadata;
+
+documentsMetadata.forEach((docMeta) => {
+    console.log('Document ID:', docMeta.id);
+    console.log('Size (KB):', docMeta.size);
+    console.log('Modified At:', new Date(docMeta.modified));
+    console.log('Is Permanent:', docMeta.permanent);
+    console.log('Attachment Count:', docMeta.attachment);
+});
+```
+
+---
+
+## Document Class Static Methods
+
+### Verifying Encrypted Data
+
+🔐 To verify if a document is still encrypted, use the `isEncrypted` static method of the `Document` class:
+
+```javascript
+const isEncrypted = Document.isEncrypted(documentData);
+```
+
+### Checking Attachments Retrieval
+
+📎 To check if a document has attachments that haven't been retrieved yet, use the `hasAttachments` method:
+
+```javascript
+const hasAttachments = Document.hasAttachments(documentData);
+```
+
+---
+
+## Conclusion
+
+🎉 You are now ready to use the Database System\! Remember to handle encryption keys securely and manage your documents efficiently. Utilize the observer pattern to react to database events, and leverage the quick store for immediate storage needs.
+
+---
+
+**Note:** All special characters in this documentation are properly escaped using `\\` to ensure correct markdown parsing.
+
+---
+
+# Additional Notes
+
+- **Encryption and Compression**: Setting `_encrypted` to `true` encrypts the document data using the provided encryption key. Similarly, setting `_compressed` to `true` compresses the document data.
+- **Attachments**: Attachments are handled using the File System Access API. Ensure you have appropriate permissions to read and write files.
+- **Deleting the Database**: To delete the entire database:
+
+  ```javascript
+  await db.deleteDatabase();
+  ```
+
+- **Observer Events**: Supported events include:
+
+  - `beforeAdd`
+  - `afterAdd`
+  - `beforeDelete`
+  - `afterDelete`
+  - `beforeGet`
+  - `afterGet`
+
+- **Querying Documents**:
+
+  ```javascript
+  const filter = { 'data.name': 'Sample Document' };
+  const results = await collection.query(filter, 'yourEncryptionKey');
+  ```
+
+- **Handling Permanent Documents**: Documents marked as `_permanent: true` will not be deleted during free space operations unless `force` is set to `true` when deleting.
+
+---
+
+**Happy Coding!**
+
+---
+
 ## Usage Example
 
 Below is a quick example demonstrating LacertaDB’s features:
@@ -35,91 +384,91 @@ import { Database, Document } from "lacertadb";
 (async function runExample() {
     // Initialize the database
     const db = new Database("interview");
-    
-    // Database instance have a quick store
+
+    // Database instance has a quick store
     // You can use it before initiating the db
-    const docSetting = { _id: "settings", data: {theme: "light", locales: "fr-CH"}, _compressed: false, _permanent: true };
-    await db.quickStore.setDocument(docSetting);
+    const quickDoc = {
+        _id: "settings",
+        data: { theme: "light", locales: "fr-CH" },
+        _compressed: false,
+        _permanent: true,
+    };
+    await db.quickStore.setDocument(quickDoc);
     const docBack = await db.quickStore.getDocument("settings");
     // You can list the documents inside your quickstore
-    // 5MB is the limit for localstorage IN TOTAL
+    // 5MB is the limit for localStorage IN TOTAL
     const docIds = db.quickStore.getAllKeys();
-    console.log(docBack, docIds)
-    
+    console.log("QuickStore Document:", docBack);
+    console.log("QuickStore Document IDs:", docIds);
+
     await db.init();
 
     // Create or get a collection
-    const collection = await db.createCollection("humanoids", {limitSizeKB: 100 * 1024});
+    const collection = await db.createCollection("humanoids");
 
-    // Add a new document (returns true if new, false if updated)
-    const doc = {_id:"myAccount",data:{id:28,name:"steemit",owner:{weight_threshold:1,account_auths:[],key_auths:[["STM6Ezkzey8FWoEnnHHP4rxbrysJqoMmzwR2EdoD5p7FDsF64qxbQ",1],["STM7TCZKisQnvR69CK9BaL6W4SJn2cXYwkfWYRicoVGGzhtFswxMH",1]]},active:{weight_threshold:1,account_auths:[],key_auths:[["STM5VkLha96X5EQu3HSkJdD8SEuwazWtZrzLjUT6Sc5sopgghBYrz",1],["STM7u1BsoqLaoCu9XHi1wjWctLWSFCuvyagFjYMfga4QNWEjP7d3U",1]]},posting:{weight_threshold:1,account_auths:[],key_auths:[["STM6kXdRbWgoH9E4hvtTZeaiSbY8FmGXQavfJZ2jzkKjT5cWYgMBS",1],["STM6tDMSSKa8Bd9ss7EjqhXPEHTWissGXJJosAU94LLpC5tsCdo61",1]]},memo_key:"STM5jZtLoV8YbxCxr4imnbWn61zMB24wwonpnVhfXRmv7j6fk3dTH",json_metadata:"",proxy:"",last_owner_update:"2018-05-31T23:32:06",last_account_update:"2018-05-31T23:32:06",created:"2016-03-24T17:00:21",mined:!0,recovery_account:"steem",last_account_recovery:"1970-01-01T00:00:00",reset_account:"null",comment_count:0,lifetime_vote_count:0,post_count:1,can_vote:!0,voting_manabar:{current_mana:"69835912701503862",last_update_time:1538171805},balance:{amount:"2806644634",precision:3,nai:"@@000000021"},savings_balance:{amount:"0",precision:3,nai:"@@000000021"},sbd_balance:{amount:"8716535",precision:3,nai:"@@000000013"},sbd_seconds:"0",sbd_seconds_last_update:"2018-11-12T02:39:39",sbd_last_interest_payment:"2018-11-12T02:39:39",savings_sbd_balance:{amount:"0",precision:3,nai:"@@000000013"},savings_sbd_seconds:"0",savings_sbd_seconds_last_update:"1970-01-01T00:00:00",savings_sbd_last_interest_payment:"1970-01-01T00:00:00",savings_withdraw_requests:0,reward_sbd_balance:{amount:"0",precision:3,nai:"@@000000013"},reward_steem_balance:{amount:"0",precision:3,nai:"@@000000021"},reward_vesting_balance:{amount:"0",precision:6,nai:"@@000000037"},reward_vesting_steem:{amount:"0",precision:3,nai:"@@000000021"},vesting_shares:{amount:"90039851836689703",precision:6,nai:"@@000000037"},delegated_vesting_shares:{amount:"20203939135185841",precision:6,nai:"@@000000037"},received_vesting_shares:{amount:"0",precision:6,nai:"@@000000037"},vesting_withdraw_rate:{amount:"0",precision:6,nai:"@@000000037"},next_vesting_withdrawal:"1969-12-31T23:59:59",withdrawn:0,to_withdraw:0,withdraw_routes:0,curation_rewards:0,posting_rewards:3548,proxied_vsf_votes:["14953279511",0,0,0],witnesses_voted_for:0,last_post:"2016-03-30T18:30:18",last_root_post:"2016-03-30T18:30:18",last_vote_time:"2016-12-04T23:10:57",post_bandwidth:0,pending_claimed_accounts:0,is_smt:!1},_compressed:!0,_permanent:!0};
-    
-    const isNewDocument = await collection.addDocument(doc, "password");
-    console.log("Document added (new):", isNewDocument);
-    await collection.addDocument({data: "hello"});
+    // Create two blobs to add as attachments
+    const blob1 = new Blob(["Hello, this is the first blob"], { type: "text/plain" });
+    const blob2 = new Blob(["Hello, this is the second blob"], { type: "text/plain" });
+
+    // Add a new document with attachments (returns true if new, false if updated)
+    const documentWithAttachments = {
+        _id: "doc_with_attachments",
+        data: { message: "Document with attachments" },
+        _attachments: [
+            { id: "attachment1", data: blob1 },
+            { id: "attachment2", data: blob2 },
+        ],
+        _compressed: false,
+        _permanent: false,
+    };
+    const isNewDocument = await collection.addDocument(documentWithAttachments);
+    console.log("Document with attachments added (new):", isNewDocument);
+
+    // Retrieve the document by its ID, with attachments
+    const retrieved = await collection.getDocument("doc_with_attachments", null, true);
+    console.log("Retrieved Document with Attachments:", retrieved);
+
+    // Add another simple document
+    await collection.addDocument({ data: "hello" });
 
     // Retrieve the document by its ID
-    const retrieved = await collection.getDocument(doc._id, "password");
-    console.log("Retrieved Document:", retrieved);
+    const retrievedSimple = await collection.getDocument(quickDoc._id, "password");
+    console.log("Retrieved Simple Document:", retrievedSimple);
 
-    const docs = new Array(50);
-    for(let i = 0; i < 50; i++){
-        docs[i] = Object.assign(doc, {_id: ""+i.toString(16), _compressed: true, _permanent: true});
-        await collection.addDocument(docs[i]);
+    // Add multiple documents
+    const docs = [];
+    for (let i = 0; i < 500; i++) {
+        const newDoc = {
+            _id: i.toString(16),
+            data: { index: i },
+            _compressed: true,
+            _permanent: false,
+        };
+        await collection.addDocument(newDoc);
+        docs.push(newDoc);
     }
 
-    // Retrieve the document by its ID
+    // Retrieve multiple documents by their IDs
     const retrievedBatch = await collection.getDocuments(["a", "b", "9", "11", "c"]);
     console.log("Retrieved Documents:", retrievedBatch);
 
     // Query documents based on a field
-    const results = await collection.query();
+    const results = await collection.query({ index: 10 });
     console.log("Query Results:", results);
 
     // Access metadata through getters
     console.log("Total DB Size (KB):", db.totalSizeKB);
-    console.log("All id in collection", collection.keys);
+    console.log("All IDs in collection:", collection.keys);
     console.log("Collection Document Count:", collection.totalLength);
 
     // Delete a document (returns true if deleted, false otherwise)
-    const isDeleted = await collection.deleteDocument(doc._id);
+    const isDeleted = await collection.deleteDocument(quickDoc._id);
     console.log("Document deleted:", isDeleted);
 
     // Close the database when done
     await db.close();
-})()
+})();
 ```
-
-## API Overview
-
-LacertaDB provides a rich API to manage your data with ease:
-
-- **Database**:
-    - `quickStore`: Access DB root document before init.
-    - `init()`: Initialize the database.
-    - `createCollection(collectionName)`: Creates or retrieves a collection.
-    - `getCollection(collectionName)`: Retrieves a collection.
-    - `deleteDatabase()`: Deletes the entire database.
-    - **Getters**: `totalSizeKB`, `totalLength`, `modifiedAt`.
-
-- **Collection**:
-    - `addDocument(doc, password)`: Adds a new document or updates an existing one and eventually encrypt it.
-    - `getDocument(id, password)`: Retrieves a document by its ID and optionaly decrypt it.
-    - `deleteDocument(id)`: Deletes a document by its ID.
-    - `deleteDocuments(ids)`: Deletes documents by their IDs.
-    - `query(filter)`: Queries documents by fields (slow).
-    - **Getters**: `length`, `sizeKB`, `modifiedAt`.
-
-- **Document**:
-    - `objectOutput()`: Returns the document in a readable format.
-    - `databaseOutput()`: Returns the document in a format ready for storage.
-    
-- **QuickStore**:
-    - `getDocument()`: Returns the document in a readable format.
-    - `deleteDocument()`: Deletes a document by its ID.
-    - `getAllKeys()`: Return a list of document's IDs.
-
-> You nearly never use `new Document()`, except for the static methods: `Document.isEncrypted()` and `Document.decryptDocument` which you can call after getDocument if you didn't yet provided the password. Collection are always returned from the Database (class) instanciated object, so you don't have to use `new Collection()` but when using a DB you need to create an instance so you need to call the class with the keyword `new`!
 
 ## Contributing
 
